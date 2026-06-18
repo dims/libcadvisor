@@ -24,12 +24,6 @@ container_cpu_cfs_throttled_periods_total{container_env_foo_env="prod",id="testc
 # HELP container_cpu_cfs_throttled_seconds_total Total time duration the container has been throttled.
 # TYPE container_cpu_cfs_throttled_seconds_total counter
 container_cpu_cfs_throttled_seconds_total{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",zone_name="hello"} 1.724314 1395066363000
-# HELP container_cpu_load_average_10s Value of container cpu load average over the last 10 seconds.
-# TYPE container_cpu_load_average_10s gauge
-container_cpu_load_average_10s{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",zone_name="hello"} 2 1395066363000
-# HELP container_cpu_load_d_average_10s Value of container cpu load.d average over the last 10 seconds.
-# TYPE container_cpu_load_d_average_10s gauge
-container_cpu_load_d_average_10s{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",zone_name="hello"} 2 1395066363000
 # HELP container_cpu_system_seconds_total Cumulative system cpu time consumed in seconds.
 # TYPE container_cpu_system_seconds_total counter
 container_cpu_system_seconds_total{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",zone_name="hello"} 7e-09 1395066363000
@@ -261,13 +255,6 @@ container_spec_cpu_shares{container_env_foo_env="prod",id="testcontainer",image=
 # HELP container_start_time_seconds Start time of the container since unix epoch in seconds.
 # TYPE container_start_time_seconds gauge
 container_start_time_seconds{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",zone_name="hello"} 1.257895e+09
-# HELP container_tasks_state Number of tasks in given state
-# TYPE container_tasks_state gauge
-container_tasks_state{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",state="iowaiting",zone_name="hello"} 54 1395066363000
-container_tasks_state{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",state="running",zone_name="hello"} 51 1395066363000
-container_tasks_state{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",state="sleeping",zone_name="hello"} 50 1395066363000
-container_tasks_state{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",state="stopped",zone_name="hello"} 52 1395066363000
-container_tasks_state{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",state="uninterruptible",zone_name="hello"} 53 1395066363000
 # HELP container_threads Number of threads running inside the container
 # TYPE container_threads gauge
 container_threads{container_env_foo_env="prod",id="testcontainer",image="test",name="testcontaineralias",zone_name="hello"} 5 1395066363000
