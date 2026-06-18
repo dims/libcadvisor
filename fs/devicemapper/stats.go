@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"strings"
 
-	dm "github.com/google/cadvisor/devicemapper"
+	dm "github.com/dims/libcadvisor/devicemapper"
 )
 
 // GetDMStats returns devicemapper thin provisioning stats.

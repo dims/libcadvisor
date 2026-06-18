@@ -17,8 +17,8 @@
 package install
 
 import (
-	"github.com/google/cadvisor/fs"
-	"github.com/google/cadvisor/fs/overlay"
+	"github.com/dims/libcadvisor/fs"
+	"github.com/dims/libcadvisor/fs/overlay"
 
 	"k8s.io/klog/v2"
 )

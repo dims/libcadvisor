@@ -19,7 +19,7 @@ import (
 
 	"encoding/json"
 
-	v1 "github.com/google/cadvisor/model"
+	v1 "github.com/dims/libcadvisor/model"
 )
 
 type Config struct {

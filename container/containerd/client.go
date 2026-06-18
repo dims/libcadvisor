@@ -32,8 +32,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/google/cadvisor/container/containerd/containers"
-	"github.com/google/cadvisor/container/containerd/pkg/dialer"
+	"github.com/dims/libcadvisor/container/containerd/containers"
+	"github.com/dims/libcadvisor/container/containerd/pkg/dialer"
 )
 
 type client struct {

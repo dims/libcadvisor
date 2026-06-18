@@ -15,8 +15,8 @@
 package install
 
 import (
-	"github.com/google/cadvisor/fs"
-	"github.com/google/cadvisor/fs/zfs"
+	"github.com/dims/libcadvisor/fs"
+	"github.com/dims/libcadvisor/fs/zfs"
 
 	"k8s.io/klog/v2"
 )

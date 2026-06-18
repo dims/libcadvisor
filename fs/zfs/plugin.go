@@ -17,7 +17,7 @@ package zfs
 import (
 	"os"
 
-	"github.com/google/cadvisor/fs"
+	"github.com/dims/libcadvisor/fs"
 
 	mount "github.com/moby/sys/mountinfo"
 )

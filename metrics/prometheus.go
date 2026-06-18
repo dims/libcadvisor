@@ -20,8 +20,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/google/cadvisor/container"
-	info "github.com/google/cadvisor/model"
+	"github.com/dims/libcadvisor/container"
+	info "github.com/dims/libcadvisor/model"
 
 	"github.com/prometheus/client_golang/prometheus"
 

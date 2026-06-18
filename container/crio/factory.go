@@ -22,11 +22,11 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/google/cadvisor/container"
-	"github.com/google/cadvisor/container/libcontainer"
-	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/model"
-	"github.com/google/cadvisor/watcher"
+	"github.com/dims/libcadvisor/container"
+	"github.com/dims/libcadvisor/container/libcontainer"
+	"github.com/dims/libcadvisor/fs"
+	info "github.com/dims/libcadvisor/model"
+	"github.com/dims/libcadvisor/watcher"
 
 	"k8s.io/klog/v2"
 )
@@ -137,7 +137,7 @@ func (f *crioFactory) CanHandleAndAccept(name string) (bool, bool, error) {
 	// query cri-o for containers that don't exist in the runtime, which causes
 	// 404 errors and can lead to deadlocks during kubelet restart.
 	// See: https://github.com/cri-o/cri-o/issues/8748
-	// See: https://github.com/google/cadvisor/pull/3457
+	// See: https://github.com/dims/libcadvisor/pull/3457
 	if f.cgroupDriver == "systemd" {
 		if !strings.HasSuffix(path.Base(name), CrioNamespaceSuffix) {
 			// This is a sandbox container when using systemd

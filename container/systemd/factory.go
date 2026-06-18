@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/cadvisor/container"
-	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/model"
-	"github.com/google/cadvisor/watcher"
+	"github.com/dims/libcadvisor/container"
+	"github.com/dims/libcadvisor/fs"
+	info "github.com/dims/libcadvisor/model"
+	"github.com/dims/libcadvisor/watcher"
 
 	"k8s.io/klog/v2"
 )

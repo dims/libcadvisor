@@ -19,10 +19,10 @@ package crio
 import (
 	"k8s.io/klog/v2"
 
-	"github.com/google/cadvisor/container"
-	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/model"
-	"github.com/google/cadvisor/watcher"
+	"github.com/dims/libcadvisor/container"
+	"github.com/dims/libcadvisor/fs"
+	info "github.com/dims/libcadvisor/model"
+	"github.com/dims/libcadvisor/watcher"
 )
 
 // NewPlugin returns an implementation of container.Plugin suitable for passing to container.RegisterPlugin()

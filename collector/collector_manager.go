@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	v1 "github.com/google/cadvisor/model"
+	v1 "github.com/dims/libcadvisor/model"
 )
 
 const metricLabelPrefix = "io.cadvisor.metric."

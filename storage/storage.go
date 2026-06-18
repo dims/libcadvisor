@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"sort"
 
-	info "github.com/google/cadvisor/model"
+	info "github.com/dims/libcadvisor/model"
 )
 
 type StorageDriver interface {

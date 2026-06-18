@@ -30,9 +30,9 @@ import (
 	"github.com/opencontainers/cgroups"
 	"golang.org/x/sys/unix"
 
-	"github.com/google/cadvisor/container"
-	info "github.com/google/cadvisor/model"
-	"github.com/google/cadvisor/utils"
+	"github.com/dims/libcadvisor/container"
+	info "github.com/dims/libcadvisor/model"
+	"github.com/dims/libcadvisor/utils"
 
 	"k8s.io/klog/v2"
 )

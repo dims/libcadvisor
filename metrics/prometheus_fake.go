@@ -18,7 +18,7 @@ import (
 	"errors"
 	"time"
 
-	info "github.com/google/cadvisor/model"
+	info "github.com/dims/libcadvisor/model"
 )
 
 type testSubcontainersInfoProvider struct{}

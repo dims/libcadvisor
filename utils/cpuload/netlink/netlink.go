@@ -25,7 +25,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	info "github.com/google/cadvisor/model"
+	info "github.com/dims/libcadvisor/model"
 )
 
 var (

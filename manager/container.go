@@ -31,12 +31,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/cadvisor/cache/memory"
-	"github.com/google/cadvisor/collector"
-	"github.com/google/cadvisor/container"
-	info "github.com/google/cadvisor/model"
-	"github.com/google/cadvisor/stats"
-	"github.com/google/cadvisor/utils/cpuload"
+	"github.com/dims/libcadvisor/cache/memory"
+	"github.com/dims/libcadvisor/collector"
+	"github.com/dims/libcadvisor/container"
+	info "github.com/dims/libcadvisor/model"
+	"github.com/dims/libcadvisor/stats"
+	"github.com/dims/libcadvisor/utils/cpuload"
 
 	"github.com/docker/go-units"
 

@@ -19,8 +19,8 @@ package libcontainer
 import (
 	"fmt"
 
-	"github.com/google/cadvisor/container"
-	info "github.com/google/cadvisor/model"
+	"github.com/dims/libcadvisor/container"
+	info "github.com/dims/libcadvisor/model"
 
 	"github.com/opencontainers/cgroups"
 	fs "github.com/opencontainers/cgroups/fs"

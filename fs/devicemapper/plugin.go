@@ -15,7 +15,7 @@
 package devicemapper
 
 import (
-	"github.com/google/cadvisor/fs"
+	"github.com/dims/libcadvisor/fs"
 
 	mount "github.com/moby/sys/mountinfo"
 	"k8s.io/klog/v2"

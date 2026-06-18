@@ -17,7 +17,7 @@ package metrics
 import (
 	"time"
 
-	info "github.com/google/cadvisor/model"
+	info "github.com/dims/libcadvisor/model"
 )
 
 // metricValue describes a single metric value for a given set of label values

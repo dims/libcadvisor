@@ -21,12 +21,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/cadvisor/container"
-	"github.com/google/cadvisor/container/common"
-	"github.com/google/cadvisor/container/libcontainer"
-	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/model"
-	watch "github.com/google/cadvisor/watcher"
+	"github.com/dims/libcadvisor/container"
+	"github.com/dims/libcadvisor/container/common"
+	"github.com/dims/libcadvisor/container/libcontainer"
+	"github.com/dims/libcadvisor/fs"
+	info "github.com/dims/libcadvisor/model"
+	watch "github.com/dims/libcadvisor/watcher"
 
 	"k8s.io/klog/v2"
 )

@@ -1,4 +1,4 @@
-module github.com/google/cadvisor
+module github.com/dims/libcadvisor
 
 go 1.24.0
 

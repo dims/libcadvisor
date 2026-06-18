@@ -31,7 +31,7 @@ import (
 
 	mount "github.com/moby/sys/mountinfo"
 
-	"github.com/google/cadvisor/devicemapper"
+	"github.com/dims/libcadvisor/devicemapper"
 
 	"k8s.io/klog/v2"
 )

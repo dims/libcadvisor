@@ -15,7 +15,7 @@
 // Handling statistics that are fully controlled in cAdvisor
 package stats
 
-import info "github.com/google/cadvisor/model"
+import info "github.com/dims/libcadvisor/model"
 
 // This is supposed to store global state about an cAdvisor metrics collector.
 // cAdvisor manager will call Destroy() when it stops.

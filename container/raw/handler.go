@@ -20,12 +20,12 @@ package raw
 import (
 	"fmt"
 
-	"github.com/google/cadvisor/container"
-	"github.com/google/cadvisor/container/common"
-	"github.com/google/cadvisor/container/libcontainer"
-	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/model"
-	"github.com/google/cadvisor/machine"
+	"github.com/dims/libcadvisor/container"
+	"github.com/dims/libcadvisor/container/common"
+	"github.com/dims/libcadvisor/container/libcontainer"
+	"github.com/dims/libcadvisor/fs"
+	"github.com/dims/libcadvisor/machine"
+	info "github.com/dims/libcadvisor/model"
 
 	"github.com/opencontainers/cgroups"
 	"k8s.io/klog/v2"

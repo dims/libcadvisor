@@ -36,7 +36,7 @@ import (
 
 	"github.com/containerd/errdefs"
 
-	"github.com/google/cadvisor/container/containerd/identifiers"
+	"github.com/dims/libcadvisor/container/containerd/identifiers"
 )
 
 const (

@@ -35,9 +35,9 @@ import (
 	"github.com/opencontainers/cgroups/fscommon"
 	"k8s.io/klog/v2"
 
-	"github.com/google/cadvisor/container"
-	"github.com/google/cadvisor/container/common"
-	info "github.com/google/cadvisor/model"
+	"github.com/dims/libcadvisor/container"
+	"github.com/dims/libcadvisor/container/common"
+	info "github.com/dims/libcadvisor/model"
 )
 
 var (

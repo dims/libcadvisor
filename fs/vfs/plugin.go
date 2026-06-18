@@ -19,8 +19,8 @@ package vfs
 import (
 	"strings"
 
-	"github.com/google/cadvisor/fs"
-	"github.com/google/cadvisor/utils"
+	"github.com/dims/libcadvisor/fs"
+	"github.com/dims/libcadvisor/utils"
 
 	mount "github.com/moby/sys/mountinfo"
 	"k8s.io/klog/v2"

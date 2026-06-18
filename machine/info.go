@@ -25,11 +25,11 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/model"
-	"github.com/google/cadvisor/utils/cloudinfo"
-	"github.com/google/cadvisor/utils/sysfs"
-	"github.com/google/cadvisor/utils/sysinfo"
+	"github.com/dims/libcadvisor/fs"
+	info "github.com/dims/libcadvisor/model"
+	"github.com/dims/libcadvisor/utils/cloudinfo"
+	"github.com/dims/libcadvisor/utils/sysfs"
+	"github.com/dims/libcadvisor/utils/sysinfo"
 
 	"k8s.io/klog/v2"
 )

@@ -25,11 +25,11 @@ import (
 
 	"github.com/opencontainers/cgroups"
 
-	"github.com/google/cadvisor/container"
-	"github.com/google/cadvisor/container/common"
-	containerlibcontainer "github.com/google/cadvisor/container/libcontainer"
-	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/model"
+	"github.com/dims/libcadvisor/container"
+	"github.com/dims/libcadvisor/container/common"
+	containerlibcontainer "github.com/dims/libcadvisor/container/libcontainer"
+	"github.com/dims/libcadvisor/fs"
+	info "github.com/dims/libcadvisor/model"
 )
 
 type crioContainerHandler struct {

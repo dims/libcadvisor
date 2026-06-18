@@ -20,7 +20,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/google/cadvisor/container/containerd/namespaces"
+	"github.com/dims/libcadvisor/container/containerd/namespaces"
 )
 
 type namespaceInterceptor struct {

@@ -17,7 +17,7 @@ package collector
 import (
 	"time"
 
-	v1 "github.com/google/cadvisor/model"
+	v1 "github.com/dims/libcadvisor/model"
 )
 
 // TODO(vmarmol): Export to a custom metrics type when that is available.

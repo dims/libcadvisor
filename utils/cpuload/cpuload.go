@@ -19,11 +19,11 @@ package cpuload
 import (
 	"fmt"
 
-	info "github.com/google/cadvisor/model"
+	info "github.com/dims/libcadvisor/model"
 
 	"k8s.io/klog/v2"
 
-	"github.com/google/cadvisor/utils/cpuload/netlink"
+	"github.com/dims/libcadvisor/utils/cpuload/netlink"
 )
 
 type CpuLoadReader interface {

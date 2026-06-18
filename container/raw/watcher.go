@@ -26,10 +26,10 @@ import (
 
 	inotify "k8s.io/utils/inotify"
 
-	"github.com/google/cadvisor/container"
-	"github.com/google/cadvisor/container/common"
-	"github.com/google/cadvisor/container/libcontainer"
-	"github.com/google/cadvisor/watcher"
+	"github.com/dims/libcadvisor/container"
+	"github.com/dims/libcadvisor/container/common"
+	"github.com/dims/libcadvisor/container/libcontainer"
+	"github.com/dims/libcadvisor/watcher"
 
 	"k8s.io/klog/v2"
 )

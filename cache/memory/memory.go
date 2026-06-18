@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	info "github.com/google/cadvisor/model"
-	"github.com/google/cadvisor/storage"
-	"github.com/google/cadvisor/utils"
+	info "github.com/dims/libcadvisor/model"
+	"github.com/dims/libcadvisor/storage"
+	"github.com/dims/libcadvisor/utils"
 
 	"k8s.io/klog/v2"
 )

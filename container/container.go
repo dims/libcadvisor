@@ -16,7 +16,7 @@
 // defines an interface for container operation handlers.
 package container
 
-import info "github.com/google/cadvisor/model"
+import info "github.com/dims/libcadvisor/model"
 
 // ListType describes whether listing should be just for a
 // specific container or performed recursively.

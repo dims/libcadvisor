@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/cadvisor/fs"
-	"github.com/google/cadvisor/fs/vfs"
+	"github.com/dims/libcadvisor/fs"
+	"github.com/dims/libcadvisor/fs/vfs"
 
 	mount "github.com/moby/sys/mountinfo"
 	"k8s.io/klog/v2"

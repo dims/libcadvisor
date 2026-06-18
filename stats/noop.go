@@ -18,7 +18,7 @@ package stats
 import (
 	"k8s.io/klog/v2"
 
-	v1 "github.com/google/cadvisor/model"
+	v1 "github.com/dims/libcadvisor/model"
 )
 
 type NoopManager struct {
