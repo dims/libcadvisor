@@ -24,7 +24,7 @@ import (
 	"github.com/google/cadvisor/container/common"
 	"github.com/google/cadvisor/container/libcontainer"
 	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/info/v1"
+	info "github.com/google/cadvisor/model"
 	"github.com/google/cadvisor/machine"
 
 	"github.com/opencontainers/cgroups"

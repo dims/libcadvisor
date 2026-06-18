@@ -26,7 +26,6 @@ import (
 	"path"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,10 +34,8 @@ import (
 	"github.com/google/cadvisor/cache/memory"
 	"github.com/google/cadvisor/collector"
 	"github.com/google/cadvisor/container"
-	info "github.com/google/cadvisor/info/v1"
-	v2 "github.com/google/cadvisor/info/v2"
+	info "github.com/google/cadvisor/model"
 	"github.com/google/cadvisor/stats"
-	"github.com/google/cadvisor/summary"
 	"github.com/google/cadvisor/utils/cpuload"
 
 	"github.com/docker/go-units"
@@ -89,7 +86,6 @@ type containerData struct {
 	memoryCache              *memory.InMemoryCache
 	lock                     sync.Mutex
 	loadReader               cpuload.CpuLoadReader
-	summaryReader            *summary.StatsSummary
 	loadAvg                  float64 // smoothed load average seen so far.
 	loadDAvg                 float64 // smoothed load.d average seen so far.
 	housekeepingInterval     time.Duration
@@ -223,13 +219,6 @@ func (cd *containerData) GetInfo(shouldUpdateSubcontainers bool) (*containerInfo
 	return &cInfo, nil
 }
 
-func (cd *containerData) DerivedStats() (v2.DerivedStats, error) {
-	if cd.summaryReader == nil {
-		return v2.DerivedStats{}, fmt.Errorf("derived stats not enabled for container %q", cd.info.Name)
-	}
-	return cd.summaryReader.DerivedStats()
-}
-
 func (cd *containerData) getCgroupPath(cgroups string) string {
 	if cgroups == "-" {
 		return "/"
@@ -322,131 +311,6 @@ func (cd *containerData) getContainerPids(inHostNamespace bool) ([]string, error
 	return pids, nil
 }
 
-func (cd *containerData) GetProcessList(cadvisorContainer string, inHostNamespace bool) ([]v2.ProcessInfo, error) {
-	format := "user,pid,ppid,stime,pcpu,pmem,rss,vsz,stat,time,comm,psr,cgroup"
-	out, err := cd.getPsOutput(inHostNamespace, format)
-	if err != nil {
-		return nil, err
-	}
-	return cd.parseProcessList(cadvisorContainer, inHostNamespace, out)
-}
-
-func (cd *containerData) parseProcessList(cadvisorContainer string, inHostNamespace bool, out []byte) ([]v2.ProcessInfo, error) {
-	rootfs := "/"
-	if !inHostNamespace {
-		rootfs = "/rootfs"
-	}
-	processes := []v2.ProcessInfo{}
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines[1:] {
-		processInfo, err := cd.parsePsLine(line, cadvisorContainer, inHostNamespace)
-		if err != nil {
-			return nil, fmt.Errorf("could not parse line %s: %v", line, err)
-		}
-		if processInfo == nil {
-			continue
-		}
-
-		var fdCount int
-		dirPath := path.Join(rootfs, "/proc", strconv.Itoa(processInfo.Pid), "fd")
-		fds, err := os.ReadDir(dirPath)
-		if err != nil {
-			klog.V(4).Infof("error while listing directory %q to measure fd count: %v", dirPath, err)
-			continue
-		}
-		fdCount = len(fds)
-		processInfo.FdCount = fdCount
-
-		processes = append(processes, *processInfo)
-	}
-	return processes, nil
-}
-
-func (cd *containerData) isRoot() bool {
-	return cd.info.Name == "/"
-}
-
-func (cd *containerData) parsePsLine(line, cadvisorContainer string, inHostNamespace bool) (*v2.ProcessInfo, error) {
-	const expectedFields = 13
-	if len(line) == 0 {
-		return nil, nil
-	}
-
-	info := v2.ProcessInfo{}
-	var err error
-
-	fields := strings.Fields(line)
-	if len(fields) < expectedFields {
-		return nil, fmt.Errorf("expected at least %d fields, found %d: output: %q", expectedFields, len(fields), line)
-	}
-	info.User = fields[0]
-	info.StartTime = fields[3]
-	info.Status = fields[8]
-	info.RunningTime = fields[9]
-
-	info.Pid, err = strconv.Atoi(fields[1])
-	if err != nil {
-		return nil, fmt.Errorf("invalid pid %q: %v", fields[1], err)
-	}
-	info.Ppid, err = strconv.Atoi(fields[2])
-	if err != nil {
-		return nil, fmt.Errorf("invalid ppid %q: %v", fields[2], err)
-	}
-
-	percentCPU, err := strconv.ParseFloat(fields[4], 32)
-	if err != nil {
-		return nil, fmt.Errorf("invalid cpu percent %q: %v", fields[4], err)
-	}
-	info.PercentCpu = float32(percentCPU)
-	percentMem, err := strconv.ParseFloat(fields[5], 32)
-	if err != nil {
-		return nil, fmt.Errorf("invalid memory percent %q: %v", fields[5], err)
-	}
-	info.PercentMemory = float32(percentMem)
-
-	info.RSS, err = strconv.ParseUint(fields[6], 0, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid rss %q: %v", fields[6], err)
-	}
-	info.VirtualSize, err = strconv.ParseUint(fields[7], 0, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid virtual size %q: %v", fields[7], err)
-	}
-	// convert to bytes
-	info.RSS *= 1024
-	info.VirtualSize *= 1024
-
-	// According to `man ps`: The following user-defined format specifiers may contain spaces: args, cmd, comm, command,
-	// fname, ucmd, ucomm, lstart, bsdstart, start.
-	// Therefore we need to be able to parse comm that consists of multiple space-separated parts.
-	info.Cmd = strings.Join(fields[10:len(fields)-2], " ")
-
-	// These are last two parts of the line. We create a subslice of `fields` to handle comm that includes spaces.
-	lastTwoFields := fields[len(fields)-2:]
-	info.Psr, err = strconv.Atoi(lastTwoFields[0])
-	if err != nil {
-		return nil, fmt.Errorf("invalid psr %q: %v", lastTwoFields[0], err)
-	}
-	info.CgroupPath = cd.getCgroupPath(lastTwoFields[1])
-
-	// Remove the ps command we just ran from cadvisor container.
-	// Not necessary, but makes the cadvisor page look cleaner.
-	if !inHostNamespace && cadvisorContainer == info.CgroupPath && info.Cmd == "ps" {
-		return nil, nil
-	}
-
-	// Do not report processes from other containers when non-root container requested.
-	if !cd.isRoot() && info.CgroupPath != cd.info.Name {
-		return nil, nil
-	}
-
-	// Remove cgroup information when non-root container requested.
-	if !cd.isRoot() {
-		info.CgroupPath = ""
-	}
-	return &info, nil
-}
-
 func newContainerData(containerName string, memoryCache *memory.InMemoryCache, handler container.ContainerHandler, logUsage bool, collectorManager collector.CollectorManager, maxHousekeepingInterval time.Duration, allowDynamicHousekeeping bool, clock clock.Clock) (*containerData, error) {
 	if memoryCache == nil {
 		return nil, fmt.Errorf("nil memory storage")
@@ -495,11 +359,6 @@ func newContainerData(containerName string, memoryCache *memory.InMemoryCache, h
 	err = cont.updateSpec()
 	if err != nil {
 		return nil, err
-	}
-	cont.summaryReader, err = summary.New(cont.info.Spec)
-	if err != nil {
-		cont.summaryReader = nil
-		klog.V(5).Infof("Failed to create summary reader for %q: %v", ref.Name, err)
 	}
 	return cont, nil
 }
@@ -704,13 +563,6 @@ func (cd *containerData) updateStats() error {
 			cd.updateLoadD(loadStats.NrUninterruptible)
 			// convert to 'milliLoad' to avoid floats and preserve precision.
 			stats.Cpu.LoadDAverage = int32(cd.loadDAvg * 1000)
-		}
-	}
-	if cd.summaryReader != nil {
-		err := cd.summaryReader.AddSample(*stats)
-		if err != nil {
-			// Ignore summary errors for now.
-			klog.V(2).Infof("Failed to add summary stats for %q: %v", cd.info.Name, err)
 		}
 	}
 

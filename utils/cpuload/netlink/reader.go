@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"os"
 
-	info "github.com/google/cadvisor/info/v1"
+	info "github.com/google/cadvisor/model"
 
 	"k8s.io/klog/v2"
 )

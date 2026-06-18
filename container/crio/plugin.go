@@ -21,7 +21,7 @@ import (
 
 	"github.com/google/cadvisor/container"
 	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/info/v1"
+	info "github.com/google/cadvisor/model"
 	"github.com/google/cadvisor/watcher"
 )
 

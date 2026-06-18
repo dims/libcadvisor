@@ -20,7 +20,7 @@ import (
 	"fmt"
 
 	"github.com/google/cadvisor/container"
-	info "github.com/google/cadvisor/info/v1"
+	info "github.com/google/cadvisor/model"
 
 	"github.com/opencontainers/cgroups"
 	fs "github.com/opencontainers/cgroups/fs"

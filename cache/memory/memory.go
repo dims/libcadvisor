@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	info "github.com/google/cadvisor/info/v1"
+	info "github.com/google/cadvisor/model"
 	"github.com/google/cadvisor/storage"
 	"github.com/google/cadvisor/utils"
 

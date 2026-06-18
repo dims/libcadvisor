@@ -20,7 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/google/cadvisor/container"
-	info "github.com/google/cadvisor/info/v1"
+	info "github.com/google/cadvisor/model"
 
 	"k8s.io/klog/v2"
 )

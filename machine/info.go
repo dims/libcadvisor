@@ -26,8 +26,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/info/v1"
-	"github.com/google/cadvisor/nvm"
+	info "github.com/google/cadvisor/model"
 	"github.com/google/cadvisor/utils/cloudinfo"
 	"github.com/google/cadvisor/utils/sysfs"
 	"github.com/google/cadvisor/utils/sysinfo"
@@ -85,11 +84,6 @@ func Info(sysFs sysfs.SysFs, fsInfo fs.FsInfo, inHostNamespace bool) (*info.Mach
 		return nil, err
 	}
 
-	nvmInfo, err := nvm.GetInfo()
-	if err != nil {
-		return nil, err
-	}
-
 	hugePagesInfo, err := sysinfo.GetHugePagesInfo(sysFs, hugepagesDirectory)
 	if err != nil {
 		return nil, err
@@ -137,7 +131,6 @@ func Info(sysFs sysfs.SysFs, fsInfo fs.FsInfo, inHostNamespace bool) (*info.Mach
 		MemoryCapacity:   memoryCapacity,
 		MemoryByType:     memoryByType,
 		SwapCapacity:     swapCapacity,
-		NVMInfo:          nvmInfo,
 		HugePages:        hugePagesInfo,
 		DiskMap:          diskMap,
 		NetworkDevices:   netDevices,

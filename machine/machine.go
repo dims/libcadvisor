@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"strings"
 
-	info "github.com/google/cadvisor/info/v1"
+	info "github.com/google/cadvisor/model"
 	"github.com/google/cadvisor/utils"
 	"github.com/google/cadvisor/utils/sysfs"
 	"github.com/google/cadvisor/utils/sysinfo"

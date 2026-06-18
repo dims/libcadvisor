@@ -21,8 +21,7 @@ import (
 	"time"
 
 	"github.com/google/cadvisor/container"
-	info "github.com/google/cadvisor/info/v1"
-	v2 "github.com/google/cadvisor/info/v2"
+	info "github.com/google/cadvisor/model"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -37,7 +36,7 @@ func TestPrometheusCollector(t *testing.T) {
 		s := DefaultContainerLabels(container)
 		s["zone.name"] = "hello"
 		return s
-	}, container.AllMetrics, now, v2.RequestOptions{})
+	}, container.AllMetrics, now, info.RequestOptions{})
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(c)
 
@@ -53,7 +52,7 @@ func TestPrometheusCollectorWithWhiteList(t *testing.T) {
 		s := containerLabelFunc(container)
 		s["zone.name"] = "hello"
 		return s
-	}, container.AllMetrics, now, v2.RequestOptions{})
+	}, container.AllMetrics, now, info.RequestOptions{})
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(c)
 
@@ -68,7 +67,7 @@ func TestPrometheusCollectorWithPerfAggregated(t *testing.T) {
 		s := DefaultContainerLabels(container)
 		s["zone.name"] = "hello"
 		return s
-	}, metrics, now, v2.RequestOptions{})
+	}, metrics, now, info.RequestOptions{})
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(c)
 
@@ -97,7 +96,7 @@ func TestPrometheusCollector_scrapeFailure(t *testing.T) {
 		s := DefaultContainerLabels(container)
 		s["zone.name"] = "hello"
 		return s
-	}, container.AllMetrics, now, v2.RequestOptions{})
+	}, container.AllMetrics, now, info.RequestOptions{})
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(c)
 
@@ -109,7 +108,7 @@ func TestPrometheusCollector_scrapeFailure(t *testing.T) {
 }
 
 func TestNewPrometheusCollectorWithPerf(t *testing.T) {
-	c := NewPrometheusCollector(&mockInfoProvider{}, mockLabelFunc, container.MetricSet{container.PerfMetrics: struct{}{}}, now, v2.RequestOptions{})
+	c := NewPrometheusCollector(&mockInfoProvider{}, mockLabelFunc, container.MetricSet{container.PerfMetrics: struct{}{}}, now, info.RequestOptions{})
 	assert.Len(t, c.containerMetrics, 6)
 	names := []string{}
 	for _, m := range c.containerMetrics {
@@ -125,7 +124,7 @@ func TestNewPrometheusCollectorWithPerf(t *testing.T) {
 
 func TestNewPrometheusCollectorWithRequestOptions(t *testing.T) {
 	p := mockInfoProvider{}
-	opts := v2.RequestOptions{
+	opts := info.RequestOptions{
 		IdType: "docker",
 	}
 	c := NewPrometheusCollector(&p, mockLabelFunc, container.AllMetrics, now, opts)
@@ -135,10 +134,10 @@ func TestNewPrometheusCollectorWithRequestOptions(t *testing.T) {
 }
 
 type mockInfoProvider struct {
-	options v2.RequestOptions
+	options info.RequestOptions
 }
 
-func (m *mockInfoProvider) GetRequestedContainersInfo(containerName string, options v2.RequestOptions) (map[string]*info.ContainerInfo, error) {
+func (m *mockInfoProvider) GetRequestedContainersInfo(containerName string, options info.RequestOptions) (map[string]*info.ContainerInfo, error) {
 	m.options = options
 	return map[string]*info.ContainerInfo{}, nil
 }

@@ -21,8 +21,7 @@ import (
 	"time"
 
 	"github.com/google/cadvisor/container"
-	info "github.com/google/cadvisor/info/v1"
-	v2 "github.com/google/cadvisor/info/v2"
+	info "github.com/google/cadvisor/model"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -104,14 +103,14 @@ type PrometheusCollector struct {
 	containerMetrics    []containerMetric
 	containerLabelsFunc ContainerLabelsFunc
 	includedMetrics     container.MetricSet
-	opts                v2.RequestOptions
+	opts                info.RequestOptions
 }
 
 // NewPrometheusCollector returns a new PrometheusCollector. The passed
 // ContainerLabelsFunc specifies which base labels will be attached to all
 // exported metrics. If left to nil, the DefaultContainerLabels function
 // will be used instead.
-func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetrics container.MetricSet, now clock.Clock, opts v2.RequestOptions) *PrometheusCollector {
+func NewPrometheusCollector(i infoProvider, f ContainerLabelsFunc, includedMetrics container.MetricSet, now clock.Clock, opts info.RequestOptions) *PrometheusCollector {
 	if f == nil {
 		f = DefaultContainerLabels
 	}

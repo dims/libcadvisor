@@ -37,7 +37,7 @@ import (
 
 	"github.com/google/cadvisor/container"
 	"github.com/google/cadvisor/container/common"
-	info "github.com/google/cadvisor/info/v1"
+	info "github.com/google/cadvisor/model"
 )
 
 var (

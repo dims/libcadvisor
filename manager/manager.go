@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,15 +32,9 @@ import (
 	"github.com/google/cadvisor/collector"
 	"github.com/google/cadvisor/container"
 	"github.com/google/cadvisor/container/raw"
-	"github.com/google/cadvisor/events"
 	"github.com/google/cadvisor/fs"
-	info "github.com/google/cadvisor/info/v1"
-	v2 "github.com/google/cadvisor/info/v2"
 	"github.com/google/cadvisor/machine"
-	"github.com/google/cadvisor/nvm"
-	"github.com/google/cadvisor/perf"
-	"github.com/google/cadvisor/resctrl"
-	"github.com/google/cadvisor/stats"
+	info "github.com/google/cadvisor/model"
 	"github.com/google/cadvisor/utils/oomparser"
 	"github.com/google/cadvisor/utils/sysfs"
 	"github.com/google/cadvisor/version"
@@ -81,34 +74,16 @@ type Manager interface {
 	// Stops the manager.
 	Stop() error
 
-	//  information about a container.
-	GetContainerInfo(containerName string, query *info.ContainerInfoRequest) (*info.ContainerInfo, error)
-
 	// Get V2 information about a container.
 	// Recursive (subcontainer) requests are best-effort, and may return a partial result alongside an
 	// error in the partial failure case.
-	GetContainerInfoV2(containerName string, options v2.RequestOptions) (map[string]v2.ContainerInfo, error)
-
-	// Get information about all subcontainers of the specified container (includes self).
-	SubcontainersInfo(containerName string, query *info.ContainerInfoRequest) ([]*info.ContainerInfo, error)
-
-	// Gets all the Docker containers. Return is a map from full container name to ContainerInfo.
-	AllDockerContainers(query *info.ContainerInfoRequest) (map[string]info.ContainerInfo, error)
-
-	// Gets information about a specific Docker container. The specified name is within the Docker namespace.
-	DockerContainer(dockerName string, query *info.ContainerInfoRequest) (info.ContainerInfo, error)
+	GetContainerInfoV2(containerName string, options info.RequestOptions) (map[string]info.ContainerInfo, error)
 
 	// Gets spec for all containers based on request options.
-	GetContainerSpec(containerName string, options v2.RequestOptions) (map[string]v2.ContainerSpec, error)
-
-	// Gets summary stats for all containers based on request options.
-	GetDerivedStats(containerName string, options v2.RequestOptions) (map[string]v2.DerivedStats, error)
+	GetContainerSpec(containerName string, options info.RequestOptions) (map[string]info.ContainerSpec, error)
 
 	// Get info for all requested containers based on the request options.
-	GetRequestedContainersInfo(containerName string, options v2.RequestOptions) (map[string]*info.ContainerInfo, error)
-
-	// Returns true if the named container exists.
-	Exists(containerName string) bool
+	GetRequestedContainersInfo(containerName string, options info.RequestOptions) (map[string]*info.ContainerInfo, error)
 
 	// Get information about the machine.
 	GetMachineInfo() (*info.MachineInfo, error)
@@ -116,35 +91,12 @@ type Manager interface {
 	// Get version information about different components we depend on.
 	GetVersionInfo() (*info.VersionInfo, error)
 
-	// GetFsInfoByFsUUID returns the information of the device having the
-	// specified filesystem uuid. If no such device with the UUID exists, this
-	// function will return the fs.ErrNoSuchDevice error.
-	GetFsInfoByFsUUID(uuid string) (v2.FsInfo, error)
-
 	// Get filesystem information for the filesystem that contains the given directory
-	GetDirFsInfo(dir string) (v2.FsInfo, error)
+	GetDirFsInfo(dir string) (info.FilesystemInfo, error)
 
 	// Get filesystem information for a given label.
 	// Returns information for all global filesystems if label is empty.
-	GetFsInfo(label string) ([]v2.FsInfo, error)
-
-	// Get ps output for a container.
-	GetProcessList(containerName string, options v2.RequestOptions) ([]v2.ProcessInfo, error)
-
-	// Get events streamed through passedChannel that fit the request.
-	WatchForEvents(request *events.Request) (*events.EventChannel, error)
-
-	// Get past events that have been detected and that fit the request.
-	GetPastEvents(request *events.Request) ([]*info.Event, error)
-
-	CloseEventChannel(watchID int)
-
-	// Returns debugging information. Map of lines per category.
-	DebugInfo() map[string][]string
-
-	AllPodmanContainers(c *info.ContainerInfoRequest) (map[string]info.ContainerInfo, error)
-
-	PodmanContainer(containerName string, query *info.ContainerInfoRequest) (info.ContainerInfo, error)
+	GetFsInfo(label string) ([]info.FilesystemInfo, error)
 }
 
 // Housekeeping configuration for the manager
@@ -217,23 +169,12 @@ func New(memoryCache *memory.InMemoryCache, sysfs sysfs.SysFs, HousekeepingConfi
 	newManager.machineInfo = *machineInfo
 	klog.V(1).Infof("Machine: %+v", newManager.machineInfo)
 
-	newManager.perfManager, err = perf.NewManager(perfEventsFile, machineInfo.Topology)
-	if err != nil {
-		return nil, err
-	}
-
-	newManager.resctrlManager, err = resctrl.NewManager(resctrlInterval, machineInfo.CPUVendorID, inHostNamespace)
-	if err != nil {
-		klog.V(4).Infof("Cannot gather resctrl metrics: %v", err)
-	}
-
 	versionInfo, err := getVersionInfo()
 	if err != nil {
 		return nil, err
 	}
 	klog.V(1).Infof("Version: %+v", *versionInfo)
 
-	newManager.eventHandler = events.NewEventManager(parseEventsStoragePolicy())
 	return newManager, nil
 }
 
@@ -288,7 +229,6 @@ type manager struct {
 	quitChannels             []chan error
 	cadvisorContainer        string
 	inHostNamespace          bool
-	eventHandler             events.EventManager
 	startupTime              time.Time
 	maxHousekeepingInterval  time.Duration
 	allowDynamicHousekeeping bool
@@ -296,25 +236,10 @@ type manager struct {
 	containerWatchers        []watcher.ContainerWatcher
 	eventsChannel            chan watcher.ContainerEvent
 	collectorHTTPClient      *http.Client
-	perfManager              stats.Manager
-	resctrlManager           resctrl.ResControlManager
 	// List of raw container cgroup path prefix whitelist.
 	rawContainerCgroupPathPrefixWhiteList []string
 	// List of container env prefix whitelist, the matched container envs would be collected into metrics as extra labels.
 	containerEnvMetadataWhiteList []string
-}
-
-func (m *manager) PodmanContainer(containerName string, query *info.ContainerInfoRequest) (info.ContainerInfo, error) {
-	container, err := m.namespacedContainer(containerName, PodmanNamespace)
-	if err != nil {
-		return info.ContainerInfo{}, err
-	}
-
-	inf, err := m.containerDataToContainerInfo(container, query)
-	if err != nil {
-		return info.ContainerInfo{}, err
-	}
-	return *inf, nil
 }
 
 // Start the container manager.
@@ -333,8 +258,7 @@ func (m *manager) Start() error {
 	m.containerWatchers = append(m.containerWatchers, rawWatcher)
 
 	// Watch for OOMs.
-	err = m.watchForNewOoms()
-	if err != nil {
+	if err := m.watchForNewOoms(); err != nil {
 		klog.Warningf("Could not configure a source for OOM detection, disabling OOM events: %v", err)
 	}
 
@@ -389,8 +313,6 @@ func (m *manager) Stop() error {
 		}
 	}
 	m.quitChannels = make([]chan error, 0, 2)
-	nvm.Finalize()
-	perf.Finalize()
 	return nil
 }
 
@@ -460,54 +382,22 @@ func (m *manager) globalHousekeeping(quit chan error) {
 	}
 }
 
-func (m *manager) getContainerData(containerName string) (*containerData, error) {
-	// Ensure we have the container.
-	cont, ok := m.containers.Load(namespacedContainerName{Name: containerName})
-	if !ok {
-		return nil, fmt.Errorf("unknown container %q", containerName)
-	}
-	return cont, nil
-}
-
-func (m *manager) GetDerivedStats(containerName string, options v2.RequestOptions) (map[string]v2.DerivedStats, error) {
+func (m *manager) GetContainerSpec(containerName string, options info.RequestOptions) (map[string]info.ContainerSpec, error) {
 	conts, err := m.getRequestedContainers(containerName, options)
 	if err != nil {
 		return nil, err
 	}
 	var errs partialFailure
-	stats := make(map[string]v2.DerivedStats)
-	for name, cont := range conts {
-		d, err := cont.DerivedStats()
-		if err != nil {
-			errs.append(name, "DerivedStats", err)
-		}
-		stats[name] = d
-	}
-	return stats, errs.OrNil()
-}
-
-func (m *manager) GetContainerSpec(containerName string, options v2.RequestOptions) (map[string]v2.ContainerSpec, error) {
-	conts, err := m.getRequestedContainers(containerName, options)
-	if err != nil {
-		return nil, err
-	}
-	var errs partialFailure
-	specs := make(map[string]v2.ContainerSpec)
+	specs := make(map[string]info.ContainerSpec)
 	for name, cont := range conts {
 		cinfo, err := cont.GetInfo(false)
 		if err != nil {
 			errs.append(name, "GetInfo", err)
 		}
-		spec := m.getV2Spec(cinfo)
+		spec := m.getAdjustedSpec(cinfo)
 		specs[name] = spec
 	}
 	return specs, errs.OrNil()
-}
-
-// Get V2 container spec from v1 container info.
-func (m *manager) getV2Spec(cinfo *containerInfo) v2.ContainerSpec {
-	spec := m.getAdjustedSpec(cinfo)
-	return v2.ContainerSpecFromV1(&spec, cinfo.Aliases, cinfo.Namespace)
 }
 
 func (m *manager) getAdjustedSpec(cinfo *containerInfo) info.ContainerSpec {
@@ -525,15 +415,7 @@ func (m *manager) getAdjustedSpec(cinfo *containerInfo) info.ContainerSpec {
 	return spec
 }
 
-func (m *manager) GetContainerInfo(containerName string, query *info.ContainerInfoRequest) (*info.ContainerInfo, error) {
-	cont, err := m.getContainerData(containerName)
-	if err != nil {
-		return nil, err
-	}
-	return m.containerDataToContainerInfo(cont, query)
-}
-
-func (m *manager) GetContainerInfoV2(containerName string, options v2.RequestOptions) (map[string]v2.ContainerInfo, error) {
+func (m *manager) GetContainerInfoV2(containerName string, options info.RequestOptions) (map[string]info.ContainerInfo, error) {
 	containers, err := m.getRequestedContainers(containerName, options)
 	if err != nil {
 		return nil, err
@@ -542,16 +424,17 @@ func (m *manager) GetContainerInfoV2(containerName string, options v2.RequestOpt
 	var errs partialFailure
 	var nilTime time.Time // Ignored.
 
-	infos := make(map[string]v2.ContainerInfo, len(containers))
+	infos := make(map[string]info.ContainerInfo, len(containers))
 	for name, container := range containers {
-		result := v2.ContainerInfo{}
+		result := info.ContainerInfo{}
 		cinfo, err := container.GetInfo(false)
 		if err != nil {
 			errs.append(name, "GetInfo", err)
 			infos[name] = result
 			continue
 		}
-		result.Spec = m.getV2Spec(cinfo)
+		result.Spec = m.getAdjustedSpec(cinfo)
+		result.ContainerReference = cinfo.ContainerReference
 
 		stats, err := m.memoryCache.RecentStats(name, nilTime, nilTime, options.Count)
 		if err != nil {
@@ -560,7 +443,19 @@ func (m *manager) GetContainerInfoV2(containerName string, options v2.RequestOpt
 			continue
 		}
 
-		result.Stats = v2.ContainerStatsFromV1(containerName, &cinfo.Spec, stats)
+		statsOut := make([]*info.ContainerStats, len(stats))
+		var lastStat *info.ContainerStats
+		for i, s := range stats {
+			cp := *s
+			if cinfo.Spec.HasCpu {
+				if ci, err := info.InstCpuStats(lastStat, s); err == nil {
+					cp.CpuInst = ci
+				}
+			}
+			statsOut[i] = &cp
+			lastStat = s
+		}
+		result.Stats = statsOut
 		infos[name] = result
 	}
 
@@ -615,16 +510,6 @@ func (m *manager) getSubcontainers(containerName string) map[string]*containerDa
 	return containersMap
 }
 
-func (m *manager) SubcontainersInfo(containerName string, query *info.ContainerInfoRequest) ([]*info.ContainerInfo, error) {
-	containersMap := m.getSubcontainers(containerName)
-
-	containers := make([]*containerData, 0, len(containersMap))
-	for _, cont := range containersMap {
-		containers = append(containers, cont)
-	}
-	return m.containerDataSliceToContainerInfoSlice(containers, query)
-}
-
 func (m *manager) getAllNamespacedContainers(ns string) map[string]*containerData {
 	containers := make(map[string]*containerData)
 
@@ -639,11 +524,6 @@ func (m *manager) getAllNamespacedContainers(ns string) map[string]*containerDat
 		return true
 	})
 	return containers
-}
-
-func (m *manager) AllDockerContainers(query *info.ContainerInfoRequest) (map[string]info.ContainerInfo, error) {
-	containers := m.getAllNamespacedContainers(DockerNamespace)
-	return m.containersInfo(containers, query)
 }
 
 func (m *manager) namespacedContainer(containerName string, ns string) (*containerData, error) {
@@ -678,40 +558,7 @@ func (m *manager) namespacedContainer(containerName string, ns string) (*contain
 	return cont, nil
 }
 
-func (m *manager) DockerContainer(containerName string, query *info.ContainerInfoRequest) (info.ContainerInfo, error) {
-	container, err := m.namespacedContainer(containerName, DockerNamespace)
-	if err != nil {
-		return info.ContainerInfo{}, err
-	}
-
-	inf, err := m.containerDataToContainerInfo(container, query)
-	if err != nil {
-		return info.ContainerInfo{}, err
-	}
-	return *inf, nil
-}
-
-func (m *manager) containerDataSliceToContainerInfoSlice(containers []*containerData, query *info.ContainerInfoRequest) ([]*info.ContainerInfo, error) {
-	if len(containers) == 0 {
-		return nil, fmt.Errorf("no containers found")
-	}
-
-	// Get the info for each container.
-	output := make([]*info.ContainerInfo, 0, len(containers))
-	for i := range containers {
-		cinfo, err := m.containerDataToContainerInfo(containers[i], query)
-		if err != nil {
-			// Skip containers with errors, we try to degrade gracefully.
-			klog.V(4).Infof("convert container data to container info failed with error %s", err.Error())
-			continue
-		}
-		output = append(output, cinfo)
-	}
-
-	return output, nil
-}
-
-func (m *manager) GetRequestedContainersInfo(containerName string, options v2.RequestOptions) (map[string]*info.ContainerInfo, error) {
+func (m *manager) GetRequestedContainersInfo(containerName string, options info.RequestOptions) (map[string]*info.ContainerInfo, error) {
 	containers, err := m.getRequestedContainers(containerName, options)
 	if err != nil {
 		return nil, err
@@ -735,10 +582,36 @@ func (m *manager) GetRequestedContainersInfo(containerName string, options v2.Re
 	return containersMap, errs.OrNil()
 }
 
-func (m *manager) getRequestedContainers(containerName string, options v2.RequestOptions) (map[string]*containerData, error) {
+// watchForNewOoms feeds a per-container OOM-kill counter from the kernel log via
+// oomparser. It is an engine-level async router (NOT a per-tick StatsAugmenter):
+// OOM events arrive keyed by container name and are matched to the registry here.
+// No event stream — only the counter that backs container_oom_events_total.
+func (m *manager) watchForNewOoms() error {
+	outStream := make(chan *oomparser.OomInstance, 10)
+	oomLog, err := oomparser.New()
+	if err != nil {
+		return err
+	}
+	go oomLog.StreamOoms(outStream)
+
+	go func() {
+		for oomInstance := range outStream {
+			conts, err := m.getRequestedContainers(oomInstance.ContainerName, info.RequestOptions{IdType: info.TypeName, Count: 1})
+			if err != nil || len(conts) != 1 {
+				continue
+			}
+			for _, cont := range conts {
+				atomic.AddUint64(&cont.oomEvents, 1)
+			}
+		}
+	}()
+	return nil
+}
+
+func (m *manager) getRequestedContainers(containerName string, options info.RequestOptions) (map[string]*containerData, error) {
 	containersMap := make(map[string]*containerData)
 	switch options.IdType {
-	case v2.TypeName:
+	case info.TypeName:
 		if !options.Recursive {
 			cont, err := m.getContainer(containerName)
 			if err != nil {
@@ -751,10 +624,10 @@ func (m *manager) getRequestedContainers(containerName string, options v2.Reques
 				return containersMap, fmt.Errorf("unknown container: %q", containerName)
 			}
 		}
-	case v2.TypeDocker, v2.TypePodman:
+	case info.TypeDocker, info.TypePodman:
 		namespace := map[string]string{
-			v2.TypeDocker: DockerNamespace,
-			v2.TypePodman: PodmanNamespace,
+			info.TypeDocker: DockerNamespace,
+			info.TypePodman: PodmanNamespace,
 		}[options.IdType]
 		if !options.Recursive {
 			containerName = strings.TrimPrefix(containerName, "/")
@@ -787,23 +660,15 @@ func (m *manager) getRequestedContainers(containerName string, options v2.Reques
 	return containersMap, nil
 }
 
-func (m *manager) GetDirFsInfo(dir string) (v2.FsInfo, error) {
+func (m *manager) GetDirFsInfo(dir string) (info.FilesystemInfo, error) {
 	device, err := m.fsInfo.GetDirFsDevice(dir)
 	if err != nil {
-		return v2.FsInfo{}, fmt.Errorf("failed to get device for dir %q: %v", dir, err)
+		return info.FilesystemInfo{}, fmt.Errorf("failed to get device for dir %q: %v", dir, err)
 	}
 	return m.getFsInfoByDeviceName(device.Device)
 }
 
-func (m *manager) GetFsInfoByFsUUID(uuid string) (v2.FsInfo, error) {
-	device, err := m.fsInfo.GetDeviceInfoByFsUUID(uuid)
-	if err != nil {
-		return v2.FsInfo{}, err
-	}
-	return m.getFsInfoByDeviceName(device.Device)
-}
-
-func (m *manager) GetFsInfo(label string) ([]v2.FsInfo, error) {
+func (m *manager) GetFsInfo(label string) ([]info.FilesystemInfo, error) {
 	var empty time.Time
 	// Get latest data from filesystems hanging off root container.
 	stats, err := m.memoryCache.RecentStats("/", empty, empty, 1)
@@ -817,7 +682,7 @@ func (m *manager) GetFsInfo(label string) ([]v2.FsInfo, error) {
 			return nil, err
 		}
 	}
-	fsInfo := []v2.FsInfo{}
+	fsInfo := []info.FilesystemInfo{}
 	for i := range stats[0].Filesystem {
 		fs := stats[0].Filesystem[i]
 		if len(label) != 0 && fs.Device != dev {
@@ -832,7 +697,7 @@ func (m *manager) GetFsInfo(label string) ([]v2.FsInfo, error) {
 			return nil, err
 		}
 
-		fi := v2.FsInfo{
+		fi := info.FilesystemInfo{
 			Timestamp:  stats[0].Timestamp,
 			Device:     fs.Device,
 			Mountpoint: mountpoint,
@@ -862,34 +727,6 @@ func (m *manager) GetVersionInfo() (*info.VersionInfo, error) {
 	// would be helpful so we would be able to return the last known docker version if
 	// docker was down at the time of a query.
 	return getVersionInfo()
-}
-
-func (m *manager) Exists(containerName string) bool {
-	_, ok := m.containers.Load(namespacedContainerName{Name: containerName})
-	return ok
-}
-
-func (m *manager) GetProcessList(containerName string, options v2.RequestOptions) ([]v2.ProcessInfo, error) {
-	// override recursive. Only support single container listing.
-	options.Recursive = false
-	// override MaxAge.  ProcessList does not require updated stats.
-	options.MaxAge = nil
-	conts, err := m.getRequestedContainers(containerName, options)
-	if err != nil {
-		return nil, err
-	}
-	if len(conts) != 1 {
-		return nil, fmt.Errorf("expected the request to match only one container")
-	}
-	// TODO(rjnagal): handle count? Only if we can do count by type (eg. top 5 cpu users)
-	ps := []v2.ProcessInfo{}
-	for _, cont := range conts {
-		ps, err = cont.GetProcessList(m.cadvisorContainer, m.inHostNamespace)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return ps, nil
 }
 
 func (m *manager) registerCollectors(collectorConfigs map[string]string, cont *containerData) error {
@@ -954,30 +791,6 @@ func (m *manager) createContainer(containerName string, watchSource watcher.Cont
 		return err
 	}
 
-	if m.includedMetrics.Has(container.PerfMetrics) {
-		perfCgroupPath, err := handler.GetCgroupPath("perf_event")
-		if err != nil {
-			klog.Warningf("Error getting perf_event cgroup path: %q", err)
-		} else {
-			cont.perfCollector, err = m.perfManager.GetCollector(perfCgroupPath)
-			if err != nil {
-				klog.Errorf("Perf event metrics will not be available for container %q: %v", containerName, err)
-			}
-		}
-	}
-
-	if m.includedMetrics.Has(container.ResctrlMetrics) {
-		m.machineMu.Lock()
-		noOfNUMA := len(m.machineInfo.Topology)
-		m.machineMu.Unlock()
-		cont.resctrlCollector, err = m.resctrlManager.GetCollector(containerName, func() ([]string, error) {
-			return cont.getContainerPids(m.inHostNamespace)
-		}, noOfNUMA)
-		if err != nil {
-			klog.V(4).Infof("resctrl metrics will not be available for container %s: %s", cont.info.Name, err)
-		}
-	}
-
 	// Add collectors
 	labels := handler.GetContainerLabels()
 	collectorConfigs := collector.GetCollectorConfigs(labels)
@@ -997,25 +810,6 @@ func (m *manager) createContainer(containerName string, watchSource watcher.Cont
 
 	klog.V(3).Infof("Added container: %q (aliases: %v, namespace: %q)", containerName, cont.info.Aliases, cont.info.Namespace)
 
-	contSpec, err := cont.handler.GetSpec()
-	if err != nil {
-		return err
-	}
-
-	contRef, err := cont.handler.ContainerReference()
-	if err != nil {
-		return err
-	}
-
-	newEvent := &info.Event{
-		ContainerName: contRef.Name,
-		Timestamp:     contSpec.CreationTime,
-		EventType:     info.EventContainerCreation,
-	}
-	err = m.eventHandler.AddEvent(newEvent)
-	if err != nil {
-		return err
-	}
 	// Start the container's housekeeping.
 	return cont.Start()
 }
@@ -1051,25 +845,6 @@ func (m *manager) destroyContainer(containerName string) error {
 	}
 	klog.V(3).Infof("Destroyed container: %q (aliases: %v, namespace: %q, exit_code: %d)", containerName, cont.info.Aliases, cont.info.Namespace, exitCode)
 
-	contRef, err := cont.handler.ContainerReference()
-	if err != nil {
-		return err
-	}
-
-	newEvent := &info.Event{
-		ContainerName: contRef.Name,
-		Timestamp:     time.Now(),
-		EventType:     info.EventContainerDeletion,
-		EventData: info.EventData{
-			ContainerDeletion: &info.ContainerDeletionEventData{
-				ExitCode: exitCode,
-			},
-		},
-	}
-	err = m.eventHandler.AddEvent(newEvent)
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -1207,199 +982,21 @@ func (m *manager) watchForNewContainers(quit chan error) error {
 	return nil
 }
 
-func (m *manager) watchForNewOoms() error {
-	klog.V(2).Infof("Started watching for new ooms in manager")
-	outStream := make(chan *oomparser.OomInstance, 10)
-	oomLog, err := oomparser.New()
-	if err != nil {
-		return err
-	}
-	go oomLog.StreamOoms(outStream)
-
-	go func() {
-		for oomInstance := range outStream {
-			// Surface OOM and OOM kill events.
-			newEvent := &info.Event{
-				ContainerName: oomInstance.ContainerName,
-				Timestamp:     oomInstance.TimeOfDeath,
-				EventType:     info.EventOom,
-			}
-			err := m.eventHandler.AddEvent(newEvent)
-			if err != nil {
-				klog.Errorf("failed to add OOM event for %q: %v", oomInstance.ContainerName, err)
-			}
-			klog.V(3).Infof("Created an OOM event in container %q at %v", oomInstance.ContainerName, oomInstance.TimeOfDeath)
-
-			newEvent = &info.Event{
-				ContainerName: oomInstance.VictimContainerName,
-				Timestamp:     oomInstance.TimeOfDeath,
-				EventType:     info.EventOomKill,
-				EventData: info.EventData{
-					OomKill: &info.OomKillEventData{
-						Pid:         oomInstance.Pid,
-						ProcessName: oomInstance.ProcessName,
-						Constraint:  oomInstance.Constraint,
-					},
-				},
-			}
-			err = m.eventHandler.AddEvent(newEvent)
-			if err != nil {
-				klog.Errorf("failed to add OOM kill event for %q: %v", oomInstance.ContainerName, err)
-			}
-
-			// Count OOM events for later collection by prometheus
-			request := v2.RequestOptions{
-				IdType: v2.TypeName,
-				Count:  1,
-			}
-			conts, err := m.getRequestedContainers(oomInstance.ContainerName, request)
-			if err != nil {
-				klog.V(2).Infof("failed getting container info for %q: %v", oomInstance.ContainerName, err)
-				continue
-			}
-			if len(conts) != 1 {
-				klog.V(2).Info("Expected the request to match only one container")
-				continue
-			}
-			for _, cont := range conts {
-				atomic.AddUint64(&cont.oomEvents, 1)
-			}
-		}
-	}()
-	return nil
-}
-
-// can be called by the api which will take events returned on the channel
-func (m *manager) WatchForEvents(request *events.Request) (*events.EventChannel, error) {
-	return m.eventHandler.WatchEvents(request)
-}
-
-// can be called by the api which will return all events satisfying the request
-func (m *manager) GetPastEvents(request *events.Request) ([]*info.Event, error) {
-	return m.eventHandler.GetEvents(request)
-}
-
-// called by the api when a client is no longer listening to the channel
-func (m *manager) CloseEventChannel(watchID int) {
-	m.eventHandler.StopWatch(watchID)
-}
-
-// Parses the events StoragePolicy from the flags.
-func parseEventsStoragePolicy() events.StoragePolicy {
-	policy := events.DefaultStoragePolicy()
-
-	// Parse max age.
-	parts := strings.Split(*eventStorageAgeLimit, ",")
-	for _, part := range parts {
-		items := strings.Split(part, "=")
-		if len(items) != 2 {
-			klog.Warningf("Unknown event storage policy %q when parsing max age", part)
-			continue
-		}
-		dur, err := time.ParseDuration(items[1])
-		if err != nil {
-			klog.Warningf("Unable to parse event max age duration %q: %v", items[1], err)
-			continue
-		}
-		if items[0] == "default" {
-			policy.DefaultMaxAge = dur
-			continue
-		}
-		policy.PerTypeMaxAge[info.EventType(items[0])] = dur
-	}
-
-	// Parse max number.
-	parts = strings.Split(*eventStorageEventLimit, ",")
-	for _, part := range parts {
-		items := strings.Split(part, "=")
-		if len(items) != 2 {
-			klog.Warningf("Unknown event storage policy %q when parsing max event limit", part)
-			continue
-		}
-		val, err := strconv.Atoi(items[1])
-		if err != nil {
-			klog.Warningf("Unable to parse integer from %q: %v", items[1], err)
-			continue
-		}
-		if items[0] == "default" {
-			policy.DefaultMaxNumEvents = val
-			continue
-		}
-		policy.PerTypeMaxNumEvents[info.EventType(items[0])] = val
-	}
-
-	return policy
-}
-
-func (m *manager) DebugInfo() map[string][]string {
-	debugInfo := container.DebugInfo()
-
-	// Get unique containers.
-	conts := make(map[*containerData]struct{})
-	m.containers.Range(func(_ namespacedContainerName, cont *containerData) bool {
-		if cont != nil {
-			conts[cont] = struct{}{}
-		}
-		return true
-	})
-
-	// List containers.
-	lines := make([]string, 0, len(conts))
-	for cont := range conts {
-		lines = append(lines, cont.info.Name)
-		if cont.info.Namespace != "" {
-			lines = append(lines, fmt.Sprintf("\tNamespace: %s", cont.info.Namespace))
-		}
-
-		if len(cont.info.Aliases) != 0 {
-			lines = append(lines, "\tAliases:")
-			for _, alias := range cont.info.Aliases {
-				lines = append(lines, fmt.Sprintf("\t\t%s", alias))
-			}
-		}
-	}
-
-	debugInfo["Managed containers"] = lines
-	return debugInfo
-}
-
-func (m *manager) getFsInfoByDeviceName(deviceName string) (v2.FsInfo, error) {
+func (m *manager) getFsInfoByDeviceName(deviceName string) (info.FilesystemInfo, error) {
 	mountPoint, err := m.fsInfo.GetMountpointForDevice(deviceName)
 	if err != nil {
-		return v2.FsInfo{}, fmt.Errorf("failed to get mount point for device %q: %v", deviceName, err)
+		return info.FilesystemInfo{}, fmt.Errorf("failed to get mount point for device %q: %v", deviceName, err)
 	}
 	infos, err := m.GetFsInfo("")
 	if err != nil {
-		return v2.FsInfo{}, err
+		return info.FilesystemInfo{}, err
 	}
 	for _, info := range infos {
 		if info.Mountpoint == mountPoint {
 			return info, nil
 		}
 	}
-	return v2.FsInfo{}, fmt.Errorf("cannot find filesystem info for device %q", deviceName)
-}
-
-func (m *manager) containersInfo(containers map[string]*containerData, query *info.ContainerInfoRequest) (map[string]info.ContainerInfo, error) {
-	output := make(map[string]info.ContainerInfo, len(containers))
-	for name, cont := range containers {
-		inf, err := m.containerDataToContainerInfo(cont, query)
-		if err != nil {
-			// Ignore the error because of race condition and return best-effort result.
-			if err == memory.ErrDataNotFound {
-				klog.V(4).Infof("Error getting data for container %s because of race condition", name)
-				continue
-			}
-			return nil, err
-		}
-		output[name] = *inf
-	}
-	return output, nil
-}
-
-func (m *manager) AllPodmanContainers(query *info.ContainerInfoRequest) (map[string]info.ContainerInfo, error) {
-	containers := m.getAllNamespacedContainers(PodmanNamespace)
-	return m.containersInfo(containers, query)
+	return info.FilesystemInfo{}, fmt.Errorf("cannot find filesystem info for device %q", deviceName)
 }
 
 func getVersionInfo() (*info.VersionInfo, error) {
