@@ -9,12 +9,10 @@ require (
 	github.com/containerd/ttrpc v1.2.8
 	github.com/docker/go-units v0.5.0
 	github.com/euank/go-kmsg-parser v2.0.0+incompatible
-	github.com/mistifyio/go-zfs v2.1.1+incompatible
 	github.com/moby/sys/mountinfo v0.7.2
 	github.com/opencontainers/cgroups v0.0.6
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/prometheus/client_golang v1.22.0
-	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.64.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/sys v0.39.0
@@ -42,6 +40,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	golang.org/x/net v0.48.0 // indirect

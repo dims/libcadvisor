@@ -56,25 +56,6 @@ type FsCachingPlugin interface {
 	CacheKey(partition PartitionInfo) string
 }
 
-// FsWatcherPlugin is an optional interface for plugins that provide
-// background monitoring (e.g., ZFS watcher, ThinPool watcher).
-type FsWatcherPlugin interface {
-	FsPlugin
-
-	// StartWatcher starts background monitoring.
-	// Returns a Watcher that can be used to get container-level usage.
-	StartWatcher() (FsWatcher, error)
-}
-
-// FsWatcher provides container-level filesystem usage from background monitoring.
-type FsWatcher interface {
-	// GetUsage returns filesystem usage for a specific container/path.
-	GetUsage(containerID string, deviceID string) (uint64, error)
-
-	// Stop stops the background monitoring.
-	Stop()
-}
-
 // PartitionInfo contains information needed for stats collection.
 type PartitionInfo struct {
 	Mountpoint string
@@ -132,48 +113,4 @@ func GetPluginForFsType(fsType string) FsPlugin {
 		}
 	}
 	return best
-}
-
-// GetAllPlugins returns all registered plugins.
-func GetAllPlugins() []FsPlugin {
-	pluginsLock.RLock()
-	defer pluginsLock.RUnlock()
-
-	result := make([]FsPlugin, 0, len(plugins))
-	for _, p := range plugins {
-		result = append(result, p)
-	}
-	return result
-}
-
-// InitializeWatchers starts all plugin watchers and returns them.
-func InitializeWatchers() map[string]FsWatcher {
-	pluginsLock.RLock()
-	defer pluginsLock.RUnlock()
-
-	watchers := make(map[string]FsWatcher)
-	for name, plugin := range plugins {
-		if wp, ok := plugin.(FsWatcherPlugin); ok {
-			watcher, err := wp.StartWatcher()
-			if err != nil {
-				klog.V(4).Infof("Failed to start watcher for plugin %s: %v", name, err)
-				continue
-			}
-			if watcher != nil {
-				watchers[name] = watcher
-				klog.V(4).Infof("Started watcher for FsPlugin %q", name)
-			}
-		}
-	}
-	return watchers
-}
-
-// StopWatchers stops all provided watchers.
-func StopWatchers(watchers map[string]FsWatcher) {
-	for name, watcher := range watchers {
-		if watcher != nil {
-			watcher.Stop()
-			klog.V(4).Infof("Stopped watcher for FsPlugin %q", name)
-		}
-	}
 }
