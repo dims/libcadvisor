@@ -46,7 +46,11 @@ import (
 
 var globalHousekeepingInterval = flag.Duration("global_housekeeping_interval", 1*time.Minute, "Interval between global housekeepings")
 var updateMachineInfoInterval = flag.Duration("update_machine_info_interval", 5*time.Minute, "Interval between machine info updates.")
-var logCadvisorUsage = flag.Bool("log_cadvisor_usage", false, "Whether to log the usage of the cAdvisor container")
+
+// log_cadvisor_usage is retained as a registered no-op: the per-container usage
+// logging path was removed (C6), but the kubelet pins this flag by name in
+// cmd/kubelet/app/options/globalflags_linux.go, so it must keep resolving.
+var _ = flag.Bool("log_cadvisor_usage", false, "Whether to log the usage of the cAdvisor container")
 var eventStorageAgeLimit = flag.String("event_storage_age_limit", "default=24h", "Max length of time for which to store events (per type). Value is a comma separated list of key values, where the keys are event types (e.g.: creation, oom) or \"default\" and the value is a duration. Default is applied to all non-specified event types")
 var eventStorageEventLimit = flag.String("event_storage_event_limit", "default=100000", "Max number of events to store (per type). Value is a comma separated list of key values, where the keys are event types (e.g.: creation, oom) or \"default\" and the value is an integer. Default is applied to all non-specified event types")
 
@@ -80,9 +84,6 @@ type Manager interface {
 	// Recursive (subcontainer) requests are best-effort, and may return a partial result alongside an
 	// error in the partial failure case.
 	GetContainerInfoV2(containerName string, options info.RequestOptions) (map[string]info.ContainerInfo, error)
-
-	// Gets spec for all containers based on request options.
-	GetContainerSpec(containerName string, options info.RequestOptions) (map[string]info.ContainerSpec, error)
 
 	// Get info for all requested containers based on the request options.
 	GetRequestedContainersInfo(containerName string, options info.RequestOptions) (map[string]*info.ContainerInfo, error)
@@ -380,24 +381,6 @@ func (m *manager) globalHousekeeping(quit chan error) {
 			return
 		}
 	}
-}
-
-func (m *manager) GetContainerSpec(containerName string, options info.RequestOptions) (map[string]info.ContainerSpec, error) {
-	conts, err := m.getRequestedContainers(containerName, options)
-	if err != nil {
-		return nil, err
-	}
-	var errs partialFailure
-	specs := make(map[string]info.ContainerSpec)
-	for name, cont := range conts {
-		cinfo, err := cont.GetInfo(false)
-		if err != nil {
-			errs.append(name, "GetInfo", err)
-		}
-		spec := m.getAdjustedSpec(cinfo)
-		specs[name] = spec
-	}
-	return specs, errs.OrNil()
 }
 
 func (m *manager) getAdjustedSpec(cinfo *containerInfo) info.ContainerSpec {
@@ -749,8 +732,7 @@ func (m *manager) createContainer(containerName string, watchSource watcher.Cont
 		klog.V(4).Infof("ignoring container %q", containerName)
 		return nil
 	}
-	logUsage := *logCadvisorUsage && containerName == m.cadvisorContainer
-	cont, err := newContainerData(containerName, m.memoryCache, handler, logUsage, m.maxHousekeepingInterval, m.allowDynamicHousekeeping, clock.RealClock{})
+	cont, err := newContainerData(containerName, m.memoryCache, handler, m.maxHousekeepingInterval, m.allowDynamicHousekeeping, clock.RealClock{})
 	if err != nil {
 		return err
 	}

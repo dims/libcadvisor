@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/errdefs"
 	"github.com/opencontainers/cgroups"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 
@@ -108,7 +107,7 @@ func newContainerdContainerHandler(
 		}
 
 		// Retry when task is not created yet or task is in unknown state (likely in process of initializing)
-		isRetriableError := errdefs.IsNotFound(err) || errors.Is(err, ErrTaskIsInUnknownState)
+		isRetriableError := errors.Is(err, ErrNotFound) || errors.Is(err, ErrTaskIsInUnknownState)
 		if !isRetriableError || retry == 0 {
 			return nil, err
 		}

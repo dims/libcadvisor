@@ -19,11 +19,7 @@ package manager
 import (
 	"flag"
 	"fmt"
-	"math"
 	"math/rand"
-	"os"
-	"os/exec"
-	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -35,9 +31,6 @@ import (
 	"github.com/dims/libcadvisor/container"
 	info "github.com/dims/libcadvisor/model"
 	"github.com/dims/libcadvisor/stats"
-	"github.com/dims/libcadvisor/utils/cpuload"
-
-	"github.com/docker/go-units"
 
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
@@ -46,7 +39,10 @@ import (
 const jitterDefault = 1.0
 
 // Housekeeping interval.
-var enableLoadReader = flag.Bool("enable_load_reader", false, "Whether to enable cpu load reader")
+// enable_load_reader is retained as a registered no-op: the netlink cpu-load
+// reader was removed (C2), but the kubelet still pins this flag by name in
+// cmd/kubelet/app/options/globalflags_linux.go, so it must keep resolving.
+var _ = flag.Bool("enable_load_reader", false, "Whether to enable cpu load reader")
 var HousekeepingInterval = flag.Duration("housekeeping_interval", 1*time.Second, "Interval between container housekeepings")
 var InitialSplayFactor = flag.Float64("initial_splay_factor", jitterDefault, "Factor for the initial splay b/w the container housekeepings, default is 1.0. If negative value is passed, the value will be reset to default")
 var JitterFactor = flag.Float64("jitter_factor", jitterDefault, "Factor for the jitters after the initial splay b/w the container housekeepings, default is 1.0. If negative value is passed, the value will be reset to default")
@@ -84,9 +80,6 @@ type containerData struct {
 	info                     containerInfo
 	memoryCache              *memory.InMemoryCache
 	lock                     sync.Mutex
-	loadReader               cpuload.CpuLoadReader
-	loadAvg                  float64 // smoothed load average seen so far.
-	loadDAvg                 float64 // smoothed load.d average seen so far.
 	housekeepingInterval     time.Duration
 	maxHousekeepingInterval  time.Duration
 	allowDynamicHousekeeping bool
@@ -98,12 +91,6 @@ type containerData struct {
 	lastErrorTime            time.Time
 	//  used to track time
 	clock clock.Clock
-
-	// Decay value used for load average smoothing. Interval length of 10 seconds is used.
-	loadDecay float64
-
-	// Whether to log the usage of this container when it is updated.
-	logUsage bool
 
 	// Tells the container to stop.
 	stop     chan struct{}
@@ -239,75 +226,7 @@ func (cd *containerData) getCgroupPath(cgroups string) string {
 	return string(matches[1])
 }
 
-// Returns contents of a file inside the container root.
-// Takes in a path relative to container root.
-func (cd *containerData) ReadFile(filepath string, inHostNamespace bool) ([]byte, error) {
-	pids, err := cd.getContainerPids(inHostNamespace)
-	if err != nil {
-		return nil, err
-	}
-	// TODO(rjnagal): Optimize by just reading container's cgroup.proc file when in host namespace.
-	rootfs := "/"
-	if !inHostNamespace {
-		rootfs = "/rootfs"
-	}
-	for _, pid := range pids {
-		filePath := path.Join(rootfs, "/proc", pid, "/root", filepath)
-		klog.V(3).Infof("Trying path %q", filePath)
-		data, err := os.ReadFile(filePath)
-		if err == nil {
-			return data, err
-		}
-	}
-	// No process paths could be found. Declare config non-existent.
-	return nil, fmt.Errorf("file %q does not exist", filepath)
-}
-
-// Return output for ps command in host /proc with specified format
-func (cd *containerData) getPsOutput(inHostNamespace bool, format string) ([]byte, error) {
-	args := []string{}
-	command := "ps"
-	if !inHostNamespace {
-		command = "/usr/sbin/chroot"
-		args = append(args, "/rootfs", "ps")
-	}
-	args = append(args, "-e", "-o", format)
-	out, err := exec.Command(command, args...).Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute %q command: %v", command, err)
-	}
-	return out, err
-}
-
-// Get pids of processes in this container.
-// A slightly lighterweight call than GetProcessList if other details are not required.
-func (cd *containerData) getContainerPids(inHostNamespace bool) ([]string, error) {
-	format := "pid,cgroup"
-	out, err := cd.getPsOutput(inHostNamespace, format)
-	if err != nil {
-		return nil, err
-	}
-	expectedFields := 2
-	lines := strings.Split(string(out), "\n")
-	pids := []string{}
-	for _, line := range lines[1:] {
-		if len(line) == 0 {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < expectedFields {
-			return nil, fmt.Errorf("expected at least %d fields, found %d: output: %q", expectedFields, len(fields), line)
-		}
-		pid := fields[0]
-		cgroup := cd.getCgroupPath(fields[1])
-		if cd.info.Name == cgroup {
-			pids = append(pids, pid)
-		}
-	}
-	return pids, nil
-}
-
-func newContainerData(containerName string, memoryCache *memory.InMemoryCache, handler container.ContainerHandler, logUsage bool, maxHousekeepingInterval time.Duration, allowDynamicHousekeeping bool, clock clock.Clock) (*containerData, error) {
+func newContainerData(containerName string, memoryCache *memory.InMemoryCache, handler container.ContainerHandler, maxHousekeepingInterval time.Duration, allowDynamicHousekeeping bool, clock clock.Clock) (*containerData, error) {
 	if memoryCache == nil {
 		return nil, fmt.Errorf("nil memory storage")
 	}
@@ -328,9 +247,6 @@ func newContainerData(containerName string, memoryCache *memory.InMemoryCache, h
 		firstHousekeeping:        true,
 		initialSplayFactor:       *InitialSplayFactor,
 		jitterFactor:             *JitterFactor,
-		logUsage:                 logUsage,
-		loadAvg:                  -1.0, // negative value indicates uninitialized.
-		loadDAvg:                 -1.0, // negative value indicates uninitialized.
 		stop:                     make(chan struct{}),
 		onDemandChan:             make(chan chan struct{}, 100),
 		clock:                    clock,
@@ -338,18 +254,6 @@ func newContainerData(containerName string, memoryCache *memory.InMemoryCache, h
 		resctrlCollector:         &stats.NoopCollector{},
 	}
 	cont.info.ContainerReference = ref
-
-	cont.loadDecay = math.Exp(float64(-cont.housekeepingInterval.Seconds() / 10))
-
-	if *enableLoadReader {
-		// Create cpu load reader.
-		loadReader, err := cpuload.New()
-		if err != nil {
-			klog.Warningf("Could not initialize cpu load reader for %q: %s", ref.Name, err)
-		} else {
-			cont.loadReader = loadReader
-		}
-	}
 
 	err = cont.updateSpec()
 	if err != nil {
@@ -397,15 +301,6 @@ func (cd *containerData) housekeeping() {
 	cd.handler.Start()
 	defer cd.handler.Cleanup()
 
-	// Initialize cpuload reader - must be cleaned up in cd.loadReader.Stop()
-	if cd.loadReader != nil {
-		err := cd.loadReader.Start()
-		if err != nil {
-			klog.Warningf("Could not start cpu load stat collector for %q: %s", cd.info.Name, err)
-		}
-		defer cd.loadReader.Stop()
-	}
-
 	// Long housekeeping is either 100ms or half of the housekeeping interval.
 	longHousekeeping := 100 * time.Millisecond
 	if *HousekeepingInterval/2 < longHousekeeping {
@@ -425,33 +320,6 @@ func (cd *containerData) housekeeping() {
 			select {
 			case <-houseKeepingTimer.C():
 			default:
-			}
-		}
-		// Log usage if asked to do so.
-		if cd.logUsage {
-			const numSamples = 60
-			var empty time.Time
-			stats, err := cd.memoryCache.RecentStats(cd.info.Name, empty, empty, numSamples)
-			if err != nil {
-				if cd.allowErrorLogging() {
-					klog.Warningf("[%s] Failed to get recent stats for logging usage: %v", cd.info.Name, err)
-				}
-			} else if len(stats) < numSamples {
-				// Ignore, not enough stats yet.
-			} else {
-				usageCPUNs := uint64(0)
-				for i := range stats {
-					if i > 0 {
-						usageCPUNs += stats[i].Cpu.Usage.Total - stats[i-1].Cpu.Usage.Total
-					}
-				}
-				usageMemory := stats[numSamples-1].Memory.Usage
-
-				instantUsageInCores := float64(stats[numSamples-1].Cpu.Usage.Total-stats[numSamples-2].Cpu.Usage.Total) / float64(stats[numSamples-1].Timestamp.Sub(stats[numSamples-2].Timestamp).Nanoseconds())
-				usageInCores := float64(usageCPUNs) / float64(stats[numSamples-1].Timestamp.Sub(stats[0].Timestamp).Nanoseconds())
-				usageInHuman := units.HumanSize(float64(usageMemory))
-				// Don't set verbosity since this is already protected by the logUsage flag.
-				klog.Infof("[%s] %.3f cores (average: %.3f cores), %s of memory", cd.info.Name, instantUsageInCores, usageInCores, usageInHuman)
 			}
 		}
 		houseKeepingTimer.Reset(cd.nextHousekeepingInterval())
@@ -501,25 +369,6 @@ func (cd *containerData) updateSpec() error {
 	return nil
 }
 
-// Calculate new smoothed load average using the new sample of runnable threads.
-// The decay used ensures that the load will stabilize on a new constant value within
-// 10 seconds.
-func (cd *containerData) updateLoad(newLoad uint64) {
-	if cd.loadAvg < 0 {
-		cd.loadAvg = float64(newLoad) // initialize to the first seen sample for faster stabilization.
-	} else {
-		cd.loadAvg = cd.loadAvg*cd.loadDecay + float64(newLoad)*(1.0-cd.loadDecay)
-	}
-}
-
-func (cd *containerData) updateLoadD(newLoad uint64) {
-	if cd.loadDAvg < 0 {
-		cd.loadDAvg = float64(newLoad) // initialize to the first seen sample for faster stabilization.
-	} else {
-		cd.loadDAvg = cd.loadDAvg*cd.loadDecay + float64(newLoad)*(1.0-cd.loadDecay)
-	}
-}
-
 func (cd *containerData) updateStats() error {
 	stats, statsErr := cd.handler.GetStats()
 	if statsErr != nil {
@@ -533,24 +382,6 @@ func (cd *containerData) updateStats() error {
 	}
 	if stats == nil {
 		return statsErr
-	}
-	if cd.loadReader != nil {
-		// TODO(vmarmol): Cache this path.
-		path, err := cd.handler.GetCgroupPath("cpu")
-		if err == nil {
-			loadStats, err := cd.loadReader.GetCpuLoad(cd.info.Name, path)
-			if err != nil {
-				return fmt.Errorf("failed to get load stat for %q - path %q, error %s", cd.info.Name, path, err)
-			}
-			stats.TaskStats = loadStats
-			cd.updateLoad(loadStats.NrRunning)
-			// convert to 'milliLoad' to avoid floats and preserve precision.
-			stats.Cpu.LoadAverage = int32(cd.loadAvg * 1000)
-
-			cd.updateLoadD(loadStats.NrUninterruptible)
-			// convert to 'milliLoad' to avoid floats and preserve precision.
-			stats.Cpu.LoadDAverage = int32(cd.loadDAvg * 1000)
-		}
 	}
 
 	stats.OOMEvents = atomic.LoadUint64(&cd.oomEvents)

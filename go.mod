@@ -4,10 +4,6 @@ go 1.24.0
 
 require (
 	github.com/containerd/containerd/api v1.10.0
-	github.com/containerd/errdefs v1.0.0
-	github.com/containerd/errdefs/pkg v0.3.0
-	github.com/containerd/ttrpc v1.2.8
-	github.com/docker/go-units v0.5.0
 	github.com/euank/go-kmsg-parser v2.0.0+incompatible
 	github.com/moby/sys/mountinfo v0.7.2
 	github.com/opencontainers/cgroups v0.0.6
@@ -26,13 +22,12 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
-	github.com/containerd/typeurl/v2 v2.2.3 // indirect
+	github.com/containerd/ttrpc v1.2.8 // indirect
 	github.com/coreos/go-systemd/v22 v22.6.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect

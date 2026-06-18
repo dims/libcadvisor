@@ -26,10 +26,11 @@ import (
 	tasksapi "github.com/containerd/containerd/api/services/tasks/v1"
 	versionapi "github.com/containerd/containerd/api/services/version/v1"
 	tasktypes "github.com/containerd/containerd/api/types/task"
-	"github.com/containerd/errdefs/pkg/errgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/dims/libcadvisor/container/containerd/containers"
@@ -52,7 +53,21 @@ type ContainerdClient interface {
 
 var (
 	ErrTaskIsInUnknownState = errors.New("containerd task is in unknown state") // used when process reported in containerd task is in Unknown State
+	// ErrNotFound is returned when containerd reports the requested object does
+	// not exist (gRPC codes.NotFound). It replaces the dependency on containerd's
+	// errdefs package; the sole consumer is the retriable-error check in handler.go.
+	ErrNotFound = errors.New("not found")
 )
+
+// toNative normalizes a gRPC error from the containerd API. A codes.NotFound
+// status is wrapped as ErrNotFound so callers can detect it with errors.Is;
+// every other error is returned unchanged (its message is preserved).
+func toNative(err error) error {
+	if status.Code(err) == codes.NotFound {
+		return fmt.Errorf("%w: %v", ErrNotFound, err)
+	}
+	return err
+}
 
 var once sync.Once
 var ctrdClient ContainerdClient = nil
@@ -116,7 +131,7 @@ func (c *client) LoadContainer(ctx context.Context, id string) (*containers.Cont
 		ID: id,
 	})
 	if err != nil {
-		return nil, errgrpc.ToNative(err)
+		return nil, toNative(err)
 	}
 	return containerFromProto(r.Container), nil
 }
@@ -126,7 +141,7 @@ func (c *client) TaskPid(ctx context.Context, id string) (uint32, error) {
 		ContainerID: id,
 	})
 	if err != nil {
-		return 0, errgrpc.ToNative(err)
+		return 0, toNative(err)
 	}
 	if response.Process.Status == tasktypes.Status_UNKNOWN {
 		return 0, ErrTaskIsInUnknownState
@@ -139,7 +154,7 @@ func (c *client) LoadTaskProcess(ctx context.Context, id string) (*tasktypes.Pro
 		ContainerID: id,
 	})
 	if err != nil {
-		return nil, errgrpc.ToNative(err)
+		return nil, toNative(err)
 	}
 
 	return response.Process, nil
@@ -150,7 +165,7 @@ func (c *client) TaskExitStatus(ctx context.Context, id string) (uint32, error) 
 		ContainerID: id,
 	})
 	if err != nil {
-		return 0, errgrpc.ToNative(err)
+		return 0, toNative(err)
 	}
 	if response.Process.Status != tasktypes.Status_STOPPED {
 		return 0, fmt.Errorf("container %s has not exited (status: %v)", id, response.Process.Status)
@@ -161,7 +176,7 @@ func (c *client) TaskExitStatus(ctx context.Context, id string) (uint32, error) 
 func (c *client) Version(ctx context.Context) (string, error) {
 	response, err := c.versionService.Version(ctx, &emptypb.Empty{})
 	if err != nil {
-		return "", errgrpc.ToNative(err)
+		return "", toNative(err)
 	}
 	return response.Version, nil
 }

@@ -38,10 +38,9 @@
 package identifiers
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
-
-	"github.com/containerd/errdefs"
 )
 
 const (
@@ -53,6 +52,11 @@ const (
 var (
 	// identifierRe defines the pattern for valid identifiers.
 	identifierRe = regexp.MustCompile(reAnchor(alphanum + reGroup(separators+reGroup(alphanum)) + "*"))
+
+	// ErrInvalidArgument is wrapped into validation failures. It is a local
+	// sentinel replacing containerd's ErrInvalidArgument; no consumer
+	// inspects it via errors.Is, it only enriches the error message.
+	ErrInvalidArgument = errors.New("invalid argument")
 )
 
 // Validate returns nil if the string s is a valid identifier.
@@ -64,15 +68,15 @@ var (
 // In general identifiers that pass this validation should be safe for use as filesystem path components.
 func Validate(s string) error {
 	if len(s) == 0 {
-		return fmt.Errorf("identifier must not be empty: %w", errdefs.ErrInvalidArgument)
+		return fmt.Errorf("identifier must not be empty: %w", ErrInvalidArgument)
 	}
 
 	if len(s) > maxLength {
-		return fmt.Errorf("identifier %q greater than maximum length (%d characters): %w", s, maxLength, errdefs.ErrInvalidArgument)
+		return fmt.Errorf("identifier %q greater than maximum length (%d characters): %w", s, maxLength, ErrInvalidArgument)
 	}
 
 	if !identifierRe.MatchString(s) {
-		return fmt.Errorf("identifier %q must match %v: %w", s, identifierRe, errdefs.ErrInvalidArgument)
+		return fmt.Errorf("identifier %q must match %v: %w", s, identifierRe, ErrInvalidArgument)
 	}
 	return nil
 }

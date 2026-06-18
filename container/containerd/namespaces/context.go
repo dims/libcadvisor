@@ -31,10 +31,9 @@ package namespaces
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-
-	"github.com/containerd/errdefs"
 
 	"github.com/dims/libcadvisor/container/containerd/identifiers"
 )
@@ -51,9 +50,10 @@ type namespaceKey struct{}
 // WithNamespace sets a given namespace on the context
 func WithNamespace(ctx context.Context, namespace string) context.Context {
 	ctx = context.WithValue(ctx, namespaceKey{}, namespace) // set our key for namespace
-	// also store on the grpc and ttrpc headers so it gets picked up by any clients that
-	// are using this.
-	return withTTRPCNamespaceHeader(withGRPCNamespaceHeader(ctx, namespace), namespace)
+	// also store on the grpc header so it gets picked up by any clients that
+	// are using this. (libcadvisor's containerd client is gRPC-only; the ttrpc
+	// transport path is not used.)
+	return withGRPCNamespaceHeader(ctx, namespace)
 }
 
 // NamespaceFromEnv uses the namespace defined in CONTAINERD_NAMESPACE or
@@ -72,18 +72,21 @@ func NamespaceFromEnv(ctx context.Context) context.Context {
 func Namespace(ctx context.Context) (string, bool) {
 	namespace, ok := ctx.Value(namespaceKey{}).(string)
 	if !ok {
-		if namespace, ok = fromGRPCHeader(ctx); !ok {
-			return fromTTRPCHeader(ctx)
-		}
+		return fromGRPCHeader(ctx)
 	}
 	return namespace, ok
 }
+
+// errFailedPrecondition is wrapped when a required namespace is missing. It is
+// a local sentinel replacing containerd's errdefs.ErrFailedPrecondition; no
+// consumer inspects it via errors.Is, it only enriches the error message.
+var errFailedPrecondition = errors.New("failed precondition")
 
 // NamespaceRequired returns the valid namespace from the context or an error.
 func NamespaceRequired(ctx context.Context) (string, error) {
 	namespace, ok := Namespace(ctx)
 	if !ok || namespace == "" {
-		return "", fmt.Errorf("namespace is required: %w", errdefs.ErrFailedPrecondition)
+		return "", fmt.Errorf("namespace is required: %w", errFailedPrecondition)
 	}
 	if err := identifiers.Validate(namespace); err != nil {
 		return "", fmt.Errorf("namespace validation: %w", err)

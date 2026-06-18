@@ -18,14 +18,9 @@ package libcontainer
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/json"
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -40,26 +35,11 @@ import (
 	info "github.com/dims/libcadvisor/model"
 )
 
-var (
-	referencedResetInterval = flag.Uint64("referenced_reset_interval", 0,
-		"Reset interval for referenced bytes (container_referenced_bytes metric), number of measurement cycles after which referenced bytes are cleared, if set to 0 referenced bytes are never cleared (default: 0)")
-
-	smapsFilePathPattern     = "/proc/%d/smaps"
-	clearRefsFilePathPattern = "/proc/%d/clear_refs"
-
-	referencedRegexp = regexp.MustCompile(`Referenced:\s*([0-9]+)\s*kB`)
-)
-
 type Handler struct {
 	cgroupManager   cgroups.Manager
 	rootFs          string
 	pid             int
 	includedMetrics container.MetricSet
-	// pidMetricsCache holds CPU scheduler stats for existing processes (map key is PID) between calls to schedulerStatsFromProcs.
-	pidMetricsCache map[int]*info.CpuSchedstat
-	// pidMetricsSaved holds accumulated CPU scheduler stats for processes that no longer exist.
-	pidMetricsSaved info.CpuSchedstat
-	cycles          uint64
 }
 
 func NewHandler(cgroupManager cgroups.Manager, rootFs string, pid int, includedMetrics container.MetricSet) *Handler {
@@ -68,7 +48,6 @@ func NewHandler(cgroupManager cgroups.Manager, rootFs string, pid int, includedM
 		rootFs:          rootFs,
 		pid:             pid,
 		includedMetrics: includedMetrics,
-		pidMetricsCache: make(map[int]*info.CpuSchedstat),
 	}
 }
 
@@ -97,26 +76,6 @@ func (h *Handler) GetStats() (*info.ContainerStats, error) {
 		setMemoryEvents(h.cgroupManager.Path(""), stats)
 	}
 
-	if h.includedMetrics.Has(container.ProcessSchedulerMetrics) {
-		stats.Cpu.Schedstat, err = h.schedulerStatsFromProcs()
-		if err != nil {
-			klog.V(4).Infof("Unable to get Process Scheduler Stats: %v", err)
-		}
-	}
-
-	if h.includedMetrics.Has(container.ReferencedMemoryMetrics) {
-		h.cycles++
-		pids, err := h.cgroupManager.GetPids()
-		if err != nil {
-			klog.V(4).Infof("Could not get PIDs for container %d: %v", h.pid, err)
-		} else {
-			stats.ReferencedMemory, err = referencedBytesStat(pids, h.cycles, *referencedResetInterval)
-			if err != nil {
-				klog.V(4).Infof("Unable to get referenced bytes: %v", err)
-			}
-		}
-	}
-
 	// If we know the pid then get network stats from /proc/<pid>/net/dev
 	if h.pid > 0 {
 		if h.includedMetrics.Has(container.NetworkUsageMetrics) {
@@ -125,45 +84,6 @@ func (h *Handler) GetStats() (*info.ContainerStats, error) {
 				klog.V(4).Infof("Unable to get network stats from pid %d: %v", h.pid, err)
 			} else {
 				stats.Network.Interfaces = append(stats.Network.Interfaces, netStats...)
-			}
-		}
-		if h.includedMetrics.Has(container.NetworkTcpUsageMetrics) {
-			t, err := tcpStatsFromProc(h.rootFs, h.pid, "net/tcp")
-			if err != nil {
-				klog.V(4).Infof("Unable to get tcp stats from pid %d: %v", h.pid, err)
-			} else {
-				stats.Network.Tcp = t
-			}
-
-			t6, err := tcpStatsFromProc(h.rootFs, h.pid, "net/tcp6")
-			if err != nil {
-				klog.V(4).Infof("Unable to get tcp6 stats from pid %d: %v", h.pid, err)
-			} else {
-				stats.Network.Tcp6 = t6
-			}
-
-		}
-		if h.includedMetrics.Has(container.NetworkAdvancedTcpUsageMetrics) {
-			ta, err := advancedTCPStatsFromProc(h.rootFs, h.pid, "net/netstat", "net/snmp")
-			if err != nil {
-				klog.V(4).Infof("Unable to get advanced tcp stats from pid %d: %v", h.pid, err)
-			} else {
-				stats.Network.TcpAdvanced = ta
-			}
-		}
-		if h.includedMetrics.Has(container.NetworkUdpUsageMetrics) {
-			u, err := udpStatsFromProc(h.rootFs, h.pid, "net/udp")
-			if err != nil {
-				klog.V(4).Infof("Unable to get udp stats from pid %d: %v", h.pid, err)
-			} else {
-				stats.Network.Udp = u
-			}
-
-			u6, err := udpStatsFromProc(h.rootFs, h.pid, "net/udp6")
-			if err != nil {
-				klog.V(4).Infof("Unable to get udp6 stats from pid %d: %v", h.pid, err)
-			} else {
-				stats.Network.Udp6 = u6
 			}
 		}
 	}
@@ -315,151 +235,6 @@ func processStatsFromProcs(rootFs string, cgroupPath string, rootPid int) (info.
 	return processStats, nil
 }
 
-func (h *Handler) schedulerStatsFromProcs() (info.CpuSchedstat, error) {
-	pids, err := h.cgroupManager.GetAllPids()
-	if err != nil {
-		return info.CpuSchedstat{}, fmt.Errorf("could not get PIDs for container %d: %w", h.pid, err)
-	}
-	alivePids := make(map[int]struct{}, len(pids))
-	for _, pid := range pids {
-		f, err := os.Open(path.Join(h.rootFs, "proc", strconv.Itoa(pid), "schedstat"))
-		if err != nil {
-			return info.CpuSchedstat{}, fmt.Errorf("couldn't open scheduler statistics for process %d: %v", pid, err)
-		}
-		defer f.Close()
-		contents, err := io.ReadAll(f)
-		if err != nil {
-			return info.CpuSchedstat{}, fmt.Errorf("couldn't read scheduler statistics for process %d: %v", pid, err)
-		}
-		alivePids[pid] = struct{}{}
-		rawMetrics := bytes.Split(bytes.TrimRight(contents, "\n"), []byte(" "))
-		if len(rawMetrics) != 3 {
-			return info.CpuSchedstat{}, fmt.Errorf("unexpected number of metrics in schedstat file for process %d", pid)
-		}
-		cacheEntry, ok := h.pidMetricsCache[pid]
-		if !ok {
-			cacheEntry = &info.CpuSchedstat{}
-			h.pidMetricsCache[pid] = cacheEntry
-		}
-		for i, rawMetric := range rawMetrics {
-			metric, err := strconv.ParseUint(string(rawMetric), 10, 64)
-			if err != nil {
-				return info.CpuSchedstat{}, fmt.Errorf("parsing error while reading scheduler statistics for process: %d: %v", pid, err)
-			}
-			switch i {
-			case 0:
-				cacheEntry.RunTime = metric
-			case 1:
-				cacheEntry.RunqueueTime = metric
-			case 2:
-				cacheEntry.RunPeriods = metric
-			}
-		}
-	}
-	schedstats := h.pidMetricsSaved // copy
-	for p, v := range h.pidMetricsCache {
-		schedstats.RunPeriods += v.RunPeriods
-		schedstats.RunqueueTime += v.RunqueueTime
-		schedstats.RunTime += v.RunTime
-		if _, alive := alivePids[p]; !alive {
-			// PID p is gone: accumulate its stats ...
-			h.pidMetricsSaved.RunPeriods += v.RunPeriods
-			h.pidMetricsSaved.RunqueueTime += v.RunqueueTime
-			h.pidMetricsSaved.RunTime += v.RunTime
-			// ... and remove its cache entry, to prevent
-			// pidMetricsCache from growing.
-			delete(h.pidMetricsCache, p)
-		}
-	}
-	return schedstats, nil
-}
-
-// referencedBytesStat gets and clears referenced bytes
-// see: https://github.com/brendangregg/wss#wsspl-referenced-page-flag
-func referencedBytesStat(pids []int, cycles uint64, resetInterval uint64) (uint64, error) {
-	referencedKBytes, err := getReferencedKBytes(pids)
-	if err != nil {
-		return uint64(0), err
-	}
-
-	err = clearReferencedBytes(pids, cycles, resetInterval)
-	if err != nil {
-		return uint64(0), err
-	}
-	return referencedKBytes * 1024, nil
-}
-
-func getReferencedKBytes(pids []int) (uint64, error) {
-	referencedKBytes := uint64(0)
-	readSmapsContent := false
-	foundMatch := false
-	for _, pid := range pids {
-		smapsFilePath := fmt.Sprintf(smapsFilePathPattern, pid)
-		smapsContent, err := os.ReadFile(smapsFilePath)
-		if err != nil {
-			klog.V(5).Infof("Cannot read %s file, err: %s", smapsFilePath, err)
-			if os.IsNotExist(err) {
-				continue // smaps file does not exists for all PIDs
-			}
-			return 0, err
-		}
-		readSmapsContent = true
-
-		allMatches := referencedRegexp.FindAllSubmatch(smapsContent, -1)
-		if len(allMatches) == 0 {
-			klog.V(5).Infof("Not found any information about referenced bytes in %s file", smapsFilePath)
-			continue // referenced bytes may not exist in smaps file
-		}
-
-		for _, matches := range allMatches {
-			if len(matches) != 2 {
-				return 0, fmt.Errorf("failed to match regexp in output: %s", string(smapsContent))
-			}
-			foundMatch = true
-			referenced, err := strconv.ParseUint(string(matches[1]), 10, 64)
-			if err != nil {
-				return 0, err
-			}
-			referencedKBytes += referenced
-		}
-	}
-
-	if len(pids) != 0 {
-		if !readSmapsContent {
-			klog.Warningf("Cannot read smaps files for any PID from %s", "CONTAINER")
-		} else if !foundMatch {
-			klog.Warningf("Not found any information about referenced bytes in smaps files for any PID from %s", "CONTAINER")
-		}
-	}
-	return referencedKBytes, nil
-}
-
-func clearReferencedBytes(pids []int, cycles uint64, resetInterval uint64) error {
-	if resetInterval == 0 {
-		return nil
-	}
-
-	if cycles%resetInterval == 0 {
-		for _, pid := range pids {
-			clearRefsFilePath := fmt.Sprintf(clearRefsFilePathPattern, pid)
-			clerRefsFile, err := os.OpenFile(clearRefsFilePath, os.O_WRONLY, 0o644)
-			if err != nil {
-				// clear_refs file may not exist for all PIDs
-				continue
-			}
-			_, err = clerRefsFile.WriteString("1\n")
-			if err != nil {
-				return err
-			}
-			err = clerRefsFile.Close()
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func networkStatsFromProc(rootFs string, pid int) ([]info.InterfaceStats, error) {
 	netStatsFile := path.Join(rootFs, "proc", strconv.Itoa(pid), "/net/dev")
 
@@ -545,221 +320,6 @@ func setInterfaceStatValues(fields []string, pointers []*uint64) error {
 		*pointers[i] = val
 	}
 	return nil
-}
-
-func tcpStatsFromProc(rootFs string, pid int, file string) (info.TcpStat, error) {
-	tcpStatsFile := path.Join(rootFs, "proc", strconv.Itoa(pid), file)
-
-	tcpStats, err := scanTCPStats(tcpStatsFile)
-	if err != nil {
-		return tcpStats, fmt.Errorf("couldn't read tcp stats: %v", err)
-	}
-
-	return tcpStats, nil
-}
-
-func advancedTCPStatsFromProc(rootFs string, pid int, file1, file2 string) (info.TcpAdvancedStat, error) {
-	var advancedStats info.TcpAdvancedStat
-	var err error
-
-	netstatFile := path.Join(rootFs, "proc", strconv.Itoa(pid), file1)
-	err = scanAdvancedTCPStats(&advancedStats, netstatFile)
-	if err != nil {
-		return advancedStats, err
-	}
-
-	snmpFile := path.Join(rootFs, "proc", strconv.Itoa(pid), file2)
-	err = scanAdvancedTCPStats(&advancedStats, snmpFile)
-	if err != nil {
-		return advancedStats, err
-	}
-
-	return advancedStats, nil
-}
-
-func scanAdvancedTCPStats(advancedStats *info.TcpAdvancedStat, advancedTCPStatsFile string) error {
-	data, err := os.ReadFile(advancedTCPStatsFile)
-	if err != nil {
-		return fmt.Errorf("failure opening %s: %v", advancedTCPStatsFile, err)
-	}
-
-	reader := strings.NewReader(string(data))
-	scanner := bufio.NewScanner(reader)
-	scanner.Split(bufio.ScanLines)
-
-	advancedTCPStats := make(map[string]interface{})
-	for scanner.Scan() {
-		nameParts := strings.Split(scanner.Text(), " ")
-		scanner.Scan()
-		valueParts := strings.Split(scanner.Text(), " ")
-		// Remove trailing :. and ignore non-tcp
-		protocol := nameParts[0][:len(nameParts[0])-1]
-		if protocol != "TcpExt" && protocol != "Tcp" {
-			continue
-		}
-		if len(nameParts) != len(valueParts) {
-			return fmt.Errorf("mismatch field count mismatch in %s: %s",
-				advancedTCPStatsFile, protocol)
-		}
-		for i := 1; i < len(nameParts); i++ {
-			if strings.Contains(valueParts[i], "-") {
-				vInt64, err := strconv.ParseInt(valueParts[i], 10, 64)
-				if err != nil {
-					return fmt.Errorf("decode value: %s to int64 error: %s", valueParts[i], err)
-				}
-				advancedTCPStats[nameParts[i]] = vInt64
-			} else {
-				vUint64, err := strconv.ParseUint(valueParts[i], 10, 64)
-				if err != nil {
-					return fmt.Errorf("decode value: %s to uint64 error: %s", valueParts[i], err)
-				}
-				advancedTCPStats[nameParts[i]] = vUint64
-			}
-		}
-	}
-
-	b, err := json.Marshal(advancedTCPStats)
-	if err != nil {
-		return err
-	}
-
-	err = json.Unmarshal(b, advancedStats)
-	if err != nil {
-		return err
-	}
-
-	return scanner.Err()
-}
-
-func scanTCPStats(tcpStatsFile string) (info.TcpStat, error) {
-	var stats info.TcpStat
-
-	data, err := os.ReadFile(tcpStatsFile)
-	if err != nil {
-		return stats, fmt.Errorf("failure opening %s: %v", tcpStatsFile, err)
-	}
-
-	tcpStateMap := map[string]uint64{
-		"01": 0, // ESTABLISHED
-		"02": 0, // SYN_SENT
-		"03": 0, // SYN_RECV
-		"04": 0, // FIN_WAIT1
-		"05": 0, // FIN_WAIT2
-		"06": 0, // TIME_WAIT
-		"07": 0, // CLOSE
-		"08": 0, // CLOSE_WAIT
-		"09": 0, // LAST_ACK
-		"0A": 0, // LISTEN
-		"0B": 0, // CLOSING
-	}
-
-	reader := strings.NewReader(string(data))
-	scanner := bufio.NewScanner(reader)
-
-	scanner.Split(bufio.ScanLines)
-
-	// Discard header line
-	if b := scanner.Scan(); !b {
-		return stats, scanner.Err()
-	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		state := strings.Fields(line)
-		// TCP state is the 4th field.
-		// Format: sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt  uid timeout inode
-		tcpState := state[3]
-		_, ok := tcpStateMap[tcpState]
-		if !ok {
-			return stats, fmt.Errorf("invalid TCP stats line: %v", line)
-		}
-		tcpStateMap[tcpState]++
-	}
-
-	stats = info.TcpStat{
-		Established: tcpStateMap["01"],
-		SynSent:     tcpStateMap["02"],
-		SynRecv:     tcpStateMap["03"],
-		FinWait1:    tcpStateMap["04"],
-		FinWait2:    tcpStateMap["05"],
-		TimeWait:    tcpStateMap["06"],
-		Close:       tcpStateMap["07"],
-		CloseWait:   tcpStateMap["08"],
-		LastAck:     tcpStateMap["09"],
-		Listen:      tcpStateMap["0A"],
-		Closing:     tcpStateMap["0B"],
-	}
-
-	return stats, nil
-}
-
-func udpStatsFromProc(rootFs string, pid int, file string) (info.UdpStat, error) {
-	var err error
-	var udpStats info.UdpStat
-
-	udpStatsFile := path.Join(rootFs, "proc", strconv.Itoa(pid), file)
-
-	r, err := os.Open(udpStatsFile)
-	if err != nil {
-		return udpStats, fmt.Errorf("failure opening %s: %v", udpStatsFile, err)
-	}
-
-	udpStats, err = scanUDPStats(r)
-	if err != nil {
-		return udpStats, fmt.Errorf("couldn't read udp stats: %v", err)
-	}
-
-	return udpStats, nil
-}
-
-func scanUDPStats(r io.Reader) (info.UdpStat, error) {
-	var stats info.UdpStat
-
-	scanner := bufio.NewScanner(r)
-	scanner.Split(bufio.ScanLines)
-
-	// Discard header line
-	if b := scanner.Scan(); !b {
-		return stats, scanner.Err()
-	}
-
-	var listening, dropped, rxQueued, txQueued uint64
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Format: sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt  uid timeout inode ref pointer drops
-
-		listening++
-
-		fs := strings.Fields(line)
-		if len(fs) != 13 {
-			continue
-		}
-
-		var rx, tx uint64
-		_, err := fmt.Sscanf(fs[4], "%X:%X", &rx, &tx)
-		if err != nil {
-			continue
-		}
-		rxQueued += rx
-		txQueued += tx
-
-		d, err := strconv.Atoi(string(fs[12]))
-		if err != nil {
-			continue
-		}
-		dropped += uint64(d)
-	}
-
-	stats = info.UdpStat{
-		Listen:   listening,
-		Dropped:  dropped,
-		RxQueued: rxQueued,
-		TxQueued: txQueued,
-	}
-
-	return stats, nil
 }
 
 func (h *Handler) GetProcesses() ([]int, error) {
@@ -897,39 +457,6 @@ func setMemoryEvents(cgroupPath string, ret *info.ContainerStats) {
 	}
 }
 
-func setCPUSetStats(s *cgroups.Stats, ret *info.ContainerStats) {
-	ret.CpuSet.MemoryMigrate = s.CPUSetStats.MemoryMigrate
-}
-
-func getNumaStats(memoryStats map[uint8]uint64) map[uint8]uint64 {
-	stats := make(map[uint8]uint64, len(memoryStats))
-	for node, usage := range memoryStats {
-		stats[node] = usage
-	}
-	return stats
-}
-
-func setMemoryNumaStats(s *cgroups.Stats, ret *info.ContainerStats) {
-	ret.Memory.ContainerData.NumaStats.File = getNumaStats(s.MemoryStats.PageUsageByNUMA.File.Nodes)
-	ret.Memory.ContainerData.NumaStats.Anon = getNumaStats(s.MemoryStats.PageUsageByNUMA.Anon.Nodes)
-	ret.Memory.ContainerData.NumaStats.Unevictable = getNumaStats(s.MemoryStats.PageUsageByNUMA.Unevictable.Nodes)
-
-	ret.Memory.HierarchicalData.NumaStats.File = getNumaStats(s.MemoryStats.PageUsageByNUMA.Hierarchical.File.Nodes)
-	ret.Memory.HierarchicalData.NumaStats.Anon = getNumaStats(s.MemoryStats.PageUsageByNUMA.Hierarchical.Anon.Nodes)
-	ret.Memory.HierarchicalData.NumaStats.Unevictable = getNumaStats(s.MemoryStats.PageUsageByNUMA.Hierarchical.Unevictable.Nodes)
-}
-
-func setHugepageStats(s *cgroups.Stats, ret *info.ContainerStats) {
-	ret.Hugetlb = make(map[string]info.HugetlbStats)
-	for k, v := range s.HugetlbStats {
-		ret.Hugetlb[k] = info.HugetlbStats{
-			Usage:    v.Usage,
-			MaxUsage: v.MaxUsage,
-			Failcnt:  v.Failcnt,
-		}
-	}
-}
-
 func setPSIData(d *cgroups.PSIData, ret *info.PSIData) {
 	if d != nil {
 		ret.Total = d.Total
@@ -965,15 +492,6 @@ func newContainerStats(cgroupStats *cgroups.Stats, includedMetrics container.Met
 			setDiskIoStats(s, ret)
 		}
 		setMemoryStats(s, ret)
-		if includedMetrics.Has(container.MemoryNumaMetrics) {
-			setMemoryNumaStats(s, ret)
-		}
-		if includedMetrics.Has(container.HugetlbUsageMetrics) {
-			setHugepageStats(s, ret)
-		}
-		if includedMetrics.Has(container.CPUSetMetrics) {
-			setCPUSetStats(s, ret)
-		}
 	}
 	return ret
 }
