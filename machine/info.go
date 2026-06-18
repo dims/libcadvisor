@@ -27,7 +27,6 @@ import (
 
 	"github.com/dims/libcadvisor/fs"
 	info "github.com/dims/libcadvisor/model"
-	"github.com/dims/libcadvisor/utils/cloudinfo"
 	"github.com/dims/libcadvisor/utils/sysfs"
 	"github.com/dims/libcadvisor/utils/sysinfo"
 
@@ -114,11 +113,6 @@ func Info(sysFs sysfs.SysFs, fsInfo fs.FsInfo, inHostNamespace bool) (*info.Mach
 		klog.Errorf("Failed to get system UUID: %v", err)
 	}
 
-	realCloudInfo := cloudinfo.NewRealCloudInfo()
-	cloudProvider := realCloudInfo.GetCloudProvider()
-	instanceType := realCloudInfo.GetInstanceType()
-	instanceID := realCloudInfo.GetInstanceID()
-
 	machineInfo := &info.MachineInfo{
 		Timestamp:        time.Now(),
 		CPUVendorID:      GetCPUVendorID(cpuinfo),
@@ -138,9 +132,11 @@ func Info(sysFs sysfs.SysFs, fsInfo fs.FsInfo, inHostNamespace bool) (*info.Mach
 		MachineID:        getInfoFromFiles(filepath.Join(rootFs, *machineIDFilePath)),
 		SystemUUID:       systemUUID,
 		BootID:           getInfoFromFiles(filepath.Join(rootFs, *bootIDFilePath)),
-		CloudProvider:    cloudProvider,
-		InstanceType:     instanceType,
-		InstanceID:       instanceID,
+		// cAdvisor cloud-provider detection is not used by Kubernetes; the
+		// provider plugins were stripped, so these are always Unknown/empty.
+		CloudProvider: info.UnknownProvider,
+		InstanceType:  info.UnknownInstance,
+		InstanceID:    "",
 	}
 
 	for i := range filesystems {

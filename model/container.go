@@ -123,19 +123,6 @@ type ContainerInfoRequest struct {
 	End time.Time `json:"end,omitempty"`
 }
 
-// Returns a ContainerInfoRequest with all default values specified.
-func DefaultContainerInfoRequest() ContainerInfoRequest {
-	return ContainerInfoRequest{
-		NumStats: 60,
-	}
-}
-
-func (r *ContainerInfoRequest) Equals(other ContainerInfoRequest) bool {
-	return r.NumStats == other.NumStats &&
-		r.Start.Equal(other.Start) &&
-		r.End.Equal(other.End)
-}
-
 type ContainerInfo struct {
 	ContainerReference
 

@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/dims/libcadvisor/cache/memory"
-	"github.com/dims/libcadvisor/collector"
 	"github.com/dims/libcadvisor/container"
 	info "github.com/dims/libcadvisor/model"
 	"github.com/dims/libcadvisor/stats"
@@ -112,9 +111,6 @@ type containerData struct {
 
 	// Tells the container to immediately collect stats
 	onDemandChan chan chan struct{}
-
-	// Runs custom metric collectors.
-	collectorManager collector.CollectorManager
 
 	// perfCollector updates stats for perf_event cgroup controller.
 	perfCollector stats.Collector
@@ -311,7 +307,7 @@ func (cd *containerData) getContainerPids(inHostNamespace bool) ([]string, error
 	return pids, nil
 }
 
-func newContainerData(containerName string, memoryCache *memory.InMemoryCache, handler container.ContainerHandler, logUsage bool, collectorManager collector.CollectorManager, maxHousekeepingInterval time.Duration, allowDynamicHousekeeping bool, clock clock.Clock) (*containerData, error) {
+func newContainerData(containerName string, memoryCache *memory.InMemoryCache, handler container.ContainerHandler, logUsage bool, maxHousekeepingInterval time.Duration, allowDynamicHousekeeping bool, clock clock.Clock) (*containerData, error) {
 	if memoryCache == nil {
 		return nil, fmt.Errorf("nil memory storage")
 	}
@@ -336,7 +332,6 @@ func newContainerData(containerName string, memoryCache *memory.InMemoryCache, h
 		loadAvg:                  -1.0, // negative value indicates uninitialized.
 		loadDAvg:                 -1.0, // negative value indicates uninitialized.
 		stop:                     make(chan struct{}),
-		collectorManager:         collectorManager,
 		onDemandChan:             make(chan chan struct{}, 100),
 		clock:                    clock,
 		perfCollector:            &stats.NoopCollector{},
@@ -500,14 +495,6 @@ func (cd *containerData) updateSpec() error {
 		return err
 	}
 
-	customMetrics, err := cd.collectorManager.GetSpec()
-	if err != nil {
-		return err
-	}
-	if len(customMetrics) > 0 {
-		spec.HasCustomMetrics = true
-		spec.CustomMetrics = customMetrics
-	}
 	cd.lock.Lock()
 	defer cd.lock.Unlock()
 	cd.info.Spec = spec
@@ -568,20 +555,6 @@ func (cd *containerData) updateStats() error {
 
 	stats.OOMEvents = atomic.LoadUint64(&cd.oomEvents)
 
-	var customStatsErr error
-	cm := cd.collectorManager.(*collector.GenericCollectorManager)
-	if len(cm.Collectors) > 0 {
-		if cm.NextCollectionTime.Before(cd.clock.Now()) {
-			customStats, err := cd.updateCustomStats()
-			if customStats != nil {
-				stats.CustomMetrics = customStats
-			}
-			if err != nil {
-				customStatsErr = err
-			}
-		}
-	}
-
 	perfStatsErr := cd.perfCollector.UpdateStats(stats)
 
 	resctrlStatsErr := cd.resctrlCollector.UpdateStats(stats)
@@ -614,18 +587,7 @@ func (cd *containerData) updateStats() error {
 		klog.Errorf("error occurred while collecting resctrl stats for container %s: %s", cInfo.Name, resctrlStatsErr)
 		return resctrlStatsErr
 	}
-	return customStatsErr
-}
-
-func (cd *containerData) updateCustomStats() (map[string][]info.MetricVal, error) {
-	_, customStats, customStatsErr := cd.collectorManager.Collect()
-	if customStatsErr != nil {
-		if !cd.handler.Exists() {
-			return customStats, nil
-		}
-		customStatsErr = fmt.Errorf("%v, continuing to push custom stats", customStatsErr)
-	}
-	return customStats, customStatsErr
+	return nil
 }
 
 func (cd *containerData) updateSubcontainers() error {

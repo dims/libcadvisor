@@ -283,14 +283,6 @@ func NewContainerHandler(name string, watchType watcher.ContainerWatchSource, me
 	return nil, false, fmt.Errorf("no known factory can handle creation of container")
 }
 
-// Clear the known factories.
-func ClearContainerHandlerFactories() {
-	factoriesLock.Lock()
-	defer factoriesLock.Unlock()
-
-	factories = map[watcher.ContainerWatchSource][]ContainerHandlerFactory{}
-}
-
 func DebugInfo() map[string][]string {
 	factoriesLock.RLock()
 	defer factoriesLock.RUnlock()

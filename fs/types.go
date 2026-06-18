@@ -56,10 +56,9 @@ func (ft FsType) String() string {
 }
 
 const (
-	ZFS          FsType = "zfs"
-	DeviceMapper FsType = "devicemapper"
-	VFS          FsType = "vfs"
-	NFS          FsType = "nfs"
+	ZFS FsType = "zfs"
+	VFS FsType = "vfs"
+	NFS FsType = "nfs"
 )
 
 type Fs struct {

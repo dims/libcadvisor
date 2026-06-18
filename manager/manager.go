@@ -20,7 +20,6 @@ package manager
 import (
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -29,7 +28,6 @@ import (
 	"time"
 
 	"github.com/dims/libcadvisor/cache/memory"
-	"github.com/dims/libcadvisor/collector"
 	"github.com/dims/libcadvisor/container"
 	"github.com/dims/libcadvisor/container/raw"
 	"github.com/dims/libcadvisor/fs"
@@ -51,7 +49,11 @@ var updateMachineInfoInterval = flag.Duration("update_machine_info_interval", 5*
 var logCadvisorUsage = flag.Bool("log_cadvisor_usage", false, "Whether to log the usage of the cAdvisor container")
 var eventStorageAgeLimit = flag.String("event_storage_age_limit", "default=24h", "Max length of time for which to store events (per type). Value is a comma separated list of key values, where the keys are event types (e.g.: creation, oom) or \"default\" and the value is a duration. Default is applied to all non-specified event types")
 var eventStorageEventLimit = flag.String("event_storage_event_limit", "default=100000", "Max number of events to store (per type). Value is a comma separated list of key values, where the keys are event types (e.g.: creation, oom) or \"default\" and the value is an integer. Default is applied to all non-specified event types")
-var applicationMetricsCountLimit = flag.Int("application_metrics_count_limit", 100, "Max number of application metrics to store (per container)")
+
+// application_metrics_count_limit is retained only so the kubelet's deprecated
+// global flag of the same name still resolves at startup; the application-metrics
+// collector that consumed it has been removed, so the value is unused.
+var _ = flag.Int("application_metrics_count_limit", 100, "Max number of application metrics to store (per container)")
 
 // The namespace under which aliases are unique.
 const (
@@ -106,7 +108,7 @@ type HousekeepingConfig = struct {
 }
 
 // New takes a memory storage and returns a new manager.
-func New(memoryCache *memory.InMemoryCache, sysfs sysfs.SysFs, HousekeepingConfig HousekeepingConfig, includedMetricsSet container.MetricSet, collectorHTTPClient *http.Client, rawContainerCgroupPathPrefixWhiteList, containerEnvMetadataWhiteList []string, perfEventsFile string, resctrlInterval time.Duration) (Manager, error) {
+func New(memoryCache *memory.InMemoryCache, sysfs sysfs.SysFs, HousekeepingConfig HousekeepingConfig, includedMetricsSet container.MetricSet, rawContainerCgroupPathPrefixWhiteList, containerEnvMetadataWhiteList []string, perfEventsFile string, resctrlInterval time.Duration) (Manager, error) {
 	if memoryCache == nil {
 		return nil, fmt.Errorf("manager requires memory storage")
 	}
@@ -157,7 +159,6 @@ func New(memoryCache *memory.InMemoryCache, sysfs sysfs.SysFs, HousekeepingConfi
 		includedMetrics:                       includedMetricsSet,
 		containerWatchers:                     []watcher.ContainerWatcher{},
 		eventsChannel:                         eventsChannel,
-		collectorHTTPClient:                   collectorHTTPClient,
 		rawContainerCgroupPathPrefixWhiteList: rawContainerCgroupPathPrefixWhiteList,
 		containerEnvMetadataWhiteList:         containerEnvMetadataWhiteList,
 	}
@@ -235,7 +236,6 @@ type manager struct {
 	includedMetrics          container.MetricSet
 	containerWatchers        []watcher.ContainerWatcher
 	eventsChannel            chan watcher.ContainerEvent
-	collectorHTTPClient      *http.Client
 	// List of raw container cgroup path prefix whitelist.
 	rawContainerCgroupPathPrefixWhiteList []string
 	// List of container env prefix whitelist, the matched container envs would be collected into metrics as extra labels.
@@ -729,37 +729,6 @@ func (m *manager) GetVersionInfo() (*info.VersionInfo, error) {
 	return getVersionInfo()
 }
 
-func (m *manager) registerCollectors(collectorConfigs map[string]string, cont *containerData) error {
-	for k, v := range collectorConfigs {
-		configFile, err := cont.ReadFile(v, m.inHostNamespace)
-		if err != nil {
-			return fmt.Errorf("failed to read config file %q for config %q, container %q: %v", k, v, cont.info.Name, err)
-		}
-		klog.V(4).Infof("Got config from %q: %q", v, configFile)
-
-		if strings.HasPrefix(k, "prometheus") || strings.HasPrefix(k, "Prometheus") {
-			newCollector, err := collector.NewPrometheusCollector(k, configFile, *applicationMetricsCountLimit, cont.handler, m.collectorHTTPClient)
-			if err != nil {
-				return fmt.Errorf("failed to create collector for container %q, config %q: %v", cont.info.Name, k, err)
-			}
-			err = cont.collectorManager.RegisterCollector(newCollector)
-			if err != nil {
-				return fmt.Errorf("failed to register collector for container %q, config %q: %v", cont.info.Name, k, err)
-			}
-		} else {
-			newCollector, err := collector.NewCollector(k, configFile, *applicationMetricsCountLimit, cont.handler, m.collectorHTTPClient)
-			if err != nil {
-				return fmt.Errorf("failed to create collector for container %q, config %q: %v", cont.info.Name, k, err)
-			}
-			err = cont.collectorManager.RegisterCollector(newCollector)
-			if err != nil {
-				return fmt.Errorf("failed to register collector for container %q, config %q: %v", cont.info.Name, k, err)
-			}
-		}
-	}
-	return nil
-}
-
 // Create a container.
 func (m *manager) createContainer(containerName string, watchSource watcher.ContainerWatchSource) error {
 	namespacedName := namespacedContainerName{
@@ -780,23 +749,10 @@ func (m *manager) createContainer(containerName string, watchSource watcher.Cont
 		klog.V(4).Infof("ignoring container %q", containerName)
 		return nil
 	}
-	collectorManager, err := collector.NewCollectorManager()
-	if err != nil {
-		return err
-	}
-
 	logUsage := *logCadvisorUsage && containerName == m.cadvisorContainer
-	cont, err := newContainerData(containerName, m.memoryCache, handler, logUsage, collectorManager, m.maxHousekeepingInterval, m.allowDynamicHousekeeping, clock.RealClock{})
+	cont, err := newContainerData(containerName, m.memoryCache, handler, logUsage, m.maxHousekeepingInterval, m.allowDynamicHousekeeping, clock.RealClock{})
 	if err != nil {
 		return err
-	}
-
-	// Add collectors
-	labels := handler.GetContainerLabels()
-	collectorConfigs := collector.GetCollectorConfigs(labels)
-	err = m.registerCollectors(collectorConfigs, cont)
-	if err != nil {
-		klog.Warningf("Failed to register collectors for %q: %v", containerName, err)
 	}
 
 	// Add the container name and all its aliases. The aliases must be within the namespace of the factory.

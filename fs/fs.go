@@ -31,18 +31,14 @@ import (
 
 	mount "github.com/moby/sys/mountinfo"
 
-	"github.com/dims/libcadvisor/devicemapper"
-
 	"k8s.io/klog/v2"
 )
 
 const (
-	LabelSystemRoot          = "root"
-	LabelDockerImages        = "docker-images"
-	LabelCrioImages          = "crio-images"
-	LabelCrioContainers      = "crio-containers"
-	DriverStatusPoolName     = "Pool Name"
-	DriverStatusDataLoopFile = "Data loop file"
+	LabelSystemRoot     = "root"
+	LabelDockerImages   = "docker-images"
+	LabelCrioImages     = "crio-images"
+	LabelCrioContainers = "crio-containers"
 )
 
 const (
@@ -85,8 +81,6 @@ type RealFsInfo struct {
 	labels map[string]string
 	// Map from mountpoint to mount information.
 	mounts map[string]mount.Info
-	// devicemapper client
-	dmsetup devicemapper.DmsetupClient
 	// fsUUIDToDeviceName is a map from the filesystem UUID to its device name.
 	fsUUIDToDeviceName map[string]string
 }
@@ -108,13 +102,10 @@ func NewFsInfo(context Context) (FsInfo, error) {
 		klog.Warningf("Failed to get disk UUID mapping, getting disk info by uuid will not work: %v", err)
 	}
 
-	// Avoid devicemapper container mounts - these are tracked by the ThinPoolWatcher
-	excluded := []string{fmt.Sprintf("%s/devicemapper/mnt", context.Docker.Root)}
 	fsInfo := &RealFsInfo{
-		partitions:         processMounts(mounts, excluded),
+		partitions:         processMounts(mounts, nil),
 		labels:             make(map[string]string),
 		mounts:             make(map[string]mount.Info),
-		dmsetup:            devicemapper.NewDmsetupClient(),
 		fsUUIDToDeviceName: fsUUIDToDeviceName,
 	}
 
@@ -122,8 +113,6 @@ func NewFsInfo(context Context) (FsInfo, error) {
 		fsInfo.mounts[mnt.Mountpoint] = *mnt
 	}
 
-	// need to call this before the log line below printing out the partitions, as this function may
-	// add a "partition" for devicemapper to fsInfo.partitions
 	fsInfo.addDockerImagesLabel(context, mounts)
 	fsInfo.addCrioImagesLabel(context, mounts)
 
@@ -215,33 +204,6 @@ func processMounts(mounts []*mount.Info, excludedMountpointPrefixes []string) ma
 	return partitions
 }
 
-// getDockerDeviceMapperInfo returns information about the devicemapper device and "partition" if
-// docker is using devicemapper for its storage driver. If a loopback device is being used, don't
-// return any information or error, as we want to report based on the actual partition where the
-// loopback file resides, inside of the loopback file itself.
-func (i *RealFsInfo) getDockerDeviceMapperInfo(context DockerContext) (string, *partition, error) {
-	if context.Driver != DeviceMapper.String() {
-		return "", nil, nil
-	}
-
-	dataLoopFile := context.DriverStatus[DriverStatusDataLoopFile]
-	if len(dataLoopFile) > 0 {
-		return "", nil, nil
-	}
-
-	dev, major, minor, blockSize, err := dockerDMDevice(context.DriverStatus, i.dmsetup)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return dev, &partition{
-		fsType:    DeviceMapper.String(),
-		major:     major,
-		minor:     minor,
-		blockSize: blockSize,
-	}, nil
-}
-
 // addSystemRootLabel attempts to determine which device contains the mount for /.
 func (i *RealFsInfo) addSystemRootLabel(mounts []*mount.Info) {
 	for _, m := range mounts {
@@ -261,16 +223,7 @@ func (i *RealFsInfo) addSystemRootLabel(mounts []*mount.Info) {
 // addDockerImagesLabel attempts to determine which device contains the mount for docker images.
 func (i *RealFsInfo) addDockerImagesLabel(context Context, mounts []*mount.Info) {
 	if context.Docker.Driver != "" {
-		dockerDev, dockerPartition, err := i.getDockerDeviceMapperInfo(context.Docker)
-		if err != nil {
-			klog.Warningf("Could not get Docker devicemapper device: %v", err)
-		}
-		if len(dockerDev) > 0 && dockerPartition != nil {
-			i.partitions[dockerDev] = *dockerPartition
-			i.labels[LabelDockerImages] = dockerDev
-		} else {
-			i.updateContainerImagesPath(LabelDockerImages, mounts, getDockerImagePaths(context))
-		}
+		i.updateContainerImagesPath(LabelDockerImages, mounts, getDockerImagePaths(context))
 	}
 }
 
@@ -723,53 +676,6 @@ func (i *RealFsInfo) GetDirUsage(dir string) (UsageInfo, error) {
 	claimToken()
 	defer releaseToken()
 	return GetDirUsage(dir)
-}
-
-// Devicemapper thin provisioning is detailed at
-// https://www.kernel.org/doc/Documentation/device-mapper/thin-provisioning.txt
-func dockerDMDevice(driverStatus map[string]string, dmsetup devicemapper.DmsetupClient) (string, uint, uint, uint, error) {
-	poolName, ok := driverStatus[DriverStatusPoolName]
-	if !ok || len(poolName) == 0 {
-		return "", 0, 0, 0, fmt.Errorf("could not get dm pool name")
-	}
-
-	out, err := dmsetup.Table(poolName)
-	if err != nil {
-		return "", 0, 0, 0, err
-	}
-
-	major, minor, dataBlkSize, err := parseDMTable(string(out))
-	if err != nil {
-		return "", 0, 0, 0, err
-	}
-
-	return poolName, major, minor, dataBlkSize, nil
-}
-
-// parseDMTable parses a single line of `dmsetup table` output and returns the
-// major device, minor device, block size, and an error.
-func parseDMTable(dmTable string) (uint, uint, uint, error) {
-	dmTable = strings.Replace(dmTable, ":", " ", -1)
-	dmFields := strings.Fields(dmTable)
-
-	if len(dmFields) < 8 {
-		return 0, 0, 0, fmt.Errorf("invalid dmsetup status output: %s", dmTable)
-	}
-
-	major, err := strconv.ParseUint(dmFields[5], 10, 32)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	minor, err := strconv.ParseUint(dmFields[6], 10, 32)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	dataBlkSize, err := strconv.ParseUint(dmFields[7], 10, 32)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-
-	return uint(major), uint(minor), uint(dataBlkSize), nil
 }
 
 // Get major and minor Ids for a mount point using btrfs as filesystem.
